@@ -75,7 +75,7 @@ export default function AnimeDetail() {
       {/* FONDO INMERSIVO (Backdrop) */}
       <div className="absolute top-0 left-0 w-full h-[60vh] -z-10">
         <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-[#0a0a0a]/80 to-[#0a0a0a]" />
-        <img src={info?.poster} className="w-full h-full object-cover opacity-30 blur-2xl" />
+        <img src={info?.poster} alt="Fondo Anime" className="w-full h-full object-cover opacity-30 blur-2xl" />
       </div>
 
       {/* NAVBAR SIMPLE */}
@@ -109,7 +109,7 @@ export default function AnimeDetail() {
             ) : (
               // ESTADO INICIAL
               <div className="absolute inset-0 flex items-center justify-center bg-neutral-900">
-                <img src={info?.poster} className="absolute inset-0 w-full h-full object-cover opacity-20" />
+                <img src={info?.poster} alt="Portada Anime" className="absolute inset-0 w-full h-full object-cover opacity-20" />
                 <div className="z-10 text-center">
                   <PlayCircle size={64} className="mx-auto text-orange-500 mb-4 drop-shadow-lg animate-bounce" />
                   <p className="text-xl font-bold">Selecciona un episodio</p>

@@ -70,7 +70,7 @@ function HomeContent() {
           {/* SI HAY BÚSQUEDA: Mostrar Grid simple */}
           {query ? (
             <div className="container mx-auto px-6 pt-32">
-              <h2 className="text-2xl font-bold mb-6">Resultados para "{query}"</h2>
+             <h2 className="text-2xl font-bold mb-6">Resultados para <span className="text-orange-500">&quot;{query}&quot;</span></h2>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
                 {searchResults.map((anime) => (
                   <AnimeCard key={anime.id} {...anime} image={anime.poster} />
