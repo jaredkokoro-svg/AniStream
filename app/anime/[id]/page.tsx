@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ArrowLeft, Play, Loader2, Info, PlayCircle, Server, Star, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
+// 👇 1. IMPORTAMOS NUESTRA FUNCIÓN INTELIGENTE
+import { getOrFetch } from '@/lib/smart-fetch';
 
 export default function AnimeDetail() {
   const params = useParams();
@@ -17,15 +19,26 @@ export default function AnimeDetail() {
   const [currentVideoUrl, setCurrentVideoUrl] = useState('');
   const [loadingVideo, setLoadingVideo] = useState(false);
 
+  // 👇 2. MODIFICAMOS EL EFECTO PARA USAR EL CEREBRO (getOrFetch)
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/info?id=${id}`)
-      .then(res => res.json())
-      .then(data => {
+
+    const loadAnimeData = async () => {
+      // Usamos getOrFetch:
+      // Clave: "anime/nombre-del-anime"
+      // Fetcher: La función que descarga si no hay caché
+      const data = await getOrFetch(`anime/${id}`, async () => {
+        const res = await fetch(`/api/info?id=${id}`);
+        return await res.json();
+      });
+
+      if (data) {
         setInfo(data);
         setLoading(false);
-      })
-      .catch(err => console.error(err));
+      }
+    };
+
+    loadAnimeData();
   }, [id]);
 
   const loadEpisode = async (episode: any) => {
@@ -40,6 +53,8 @@ export default function AnimeDetail() {
     setCurrentVideoUrl('');
 
     try {
+      // NOTA: Los videos caducan rápido, por eso NO los guardamos en caché permanente igual que la info.
+      // Los pedimos frescos siempre.
       const res = await fetch(`/api/video?id=${id}&ep=${episode.number}`);
       const data = await res.json();
       
@@ -57,7 +72,6 @@ export default function AnimeDetail() {
   };
 
   // --- LÓGICA DE NAVEGACIÓN ---
-  // Buscamos en la lista de episodios el número siguiente y anterior
   const nextEp = currentEp ? info?.episodes?.find((e: any) => e.number === currentEp.number + 1) : null;
   const prevEp = currentEp ? info?.episodes?.find((e: any) => e.number === currentEp.number - 1) : null;
 
@@ -118,7 +132,7 @@ export default function AnimeDetail() {
             )}
           </div>
 
-          {/* --- NUEVO: BARRA DE CONTROL (ANTERIOR / SIGUIENTE) --- */}
+          {/* BARRA DE CONTROL (ANTERIOR / SIGUIENTE) */}
           {currentEp && (
             <div className="flex items-center justify-between gap-4">
               <button 
