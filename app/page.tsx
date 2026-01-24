@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Loader2, Play, Crown } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Play, Rocket } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -92,9 +92,9 @@ export default function LoginPage() {
       {/* FONDO ANIMADO (Imagen de One Piece o la que gustes) */}
       <div 
         className="absolute inset-0 z-0 opacity-40 bg-cover bg-center animate-pulse-slow"
-        style={{ backgroundImage: "url('https://wallpapers.com/images/hd/one-piece-4k-luffy-crew-q4n8b4e7h8j9k0l1.jpg')" }}
+        style={{ backgroundImage: "url('https://wallpapercave.com/wp/wp9386912.jpg')" }}
       />
-      <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-transparent z-0" />
+      <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 via-20% to-transparent z-0" />
 
       {/* CONTENEDOR PRINCIPAL */}
       <div className="relative z-10 w-full max-w-md p-8 flex flex-col justify-center min-h-screen lg:ml-20">
@@ -206,7 +206,7 @@ export default function LoginPage() {
             onClick={handleGuestAccess}
             className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 group"
           >
-            <Crown size={18} className="text-yellow-500 group-hover:scale-110 transition-transform"/> Entrar como Invitado
+            <Rocket size={18} className="text-yellow-500 group-hover:scale-110 transition-transform"/> Entrar como Invitado
           </button>
 
         </div>
