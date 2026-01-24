@@ -95,7 +95,7 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
             </span>
           </div>
 
-          <h1 className="text-5xl md:text-7xl font-black leading-none tracking-tight drop-shadow-2xl text-white">
+          <h1 className="text-3xl md:text-4xl font-black leading-none tracking-tight drop-shadow-2xl text-white">
             {anime.title}
           </h1>
           
@@ -136,14 +136,38 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
         </div>
 
         {/* SALUDO DE BIENVENIDA */}
+{/* ... código anterior del Lado Izquierdo ... */}
+
+        {/* LADO DERECHO: TARJETA DE BIENVENIDA ESTILO "BADGE" */}
         {user && (
-          <div className="hidden lg:block text-right animate-fade-in-up pr-10 pointer-events-none select-none">
-            <h2 className="text-4xl font-light text-white drop-shadow-lg opacity-90">
-              Bienvenido
-            </h2>
-            <h2 className="text-6xl font-bold text-white mt-[-5px] drop-shadow-2xl tracking-tight">
-              {user.user_metadata?.full_name || user.name || "Nakama"}
-            </h2>
+          <div className="hidden lg:flex flex-col items-end justify-center h-full pr-10 pointer-events-none select-none z-20 absolute right-0 top-0 bottom-0">
+            
+            {/* Tarjeta con efecto Glassmorphism (Vidrio) */}
+            <div className="bg-black/40 backdrop-blur-xl border border-white/10 px-6 py-4 rounded-2xl flex items-center gap-4 shadow-2xl transform transition-all hover:scale-105 duration-500 group">
+               
+               {/* Texto Alineado */}
+               <div className="flex flex-col text-right">
+                  <span className="text-[13px] text-orange-400 font-bold tracking-[0.2em] uppercase mb-1">
+                    Bienvenido
+                  </span>
+                  <span className="text-3xl font-black text-white tracking-tight group-hover:text-orange-100 transition-colors">
+                    {user.user_metadata?.full_name?.split(' ')[0] || user.name || "Nakama"}
+                  </span>
+               </div>
+
+               {/* Separador vertical */}
+               <div className="w-[1px] h-10 bg-gradient-to-b from-transparent via-white/20 to-transparent"></div>
+
+               {/* Avatar Decorativo (Con brillo) */}
+               <div className="relative">
+                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white font-bold shadow-lg shadow-orange-900/50 text-lg">
+                    {user.user_metadata?.full_name ? user.user_metadata.full_name[0].toUpperCase() : "N"}
+                 </div>
+                 {/* Punto de estado online */}
+                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-black rounded-full"></div>
+               </div>
+
+            </div>
           </div>
         )}
 

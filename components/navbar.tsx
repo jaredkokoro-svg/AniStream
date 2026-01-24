@@ -69,7 +69,7 @@ export const Navbar = ({ user, isGuest }: NavbarProps) => {
         </Link>
 
         {/* MENÚ ESCRITORIO */}
-        <div className="hidden md:flex items-center gap-6">
+        <div className="hidden md:flex items-center gap-8">
           <Link href="/home" className="text-white hover:text-orange-500 transition-colors font-medium text-sm">Inicio</Link>
           <Link href="/browse" className="text-neutral-300 hover:text-orange-500 transition-colors text-sm font-medium flex items-center gap-1"><Filter size={14} /> Explorar</Link>
           {!isGuest && (
@@ -80,7 +80,7 @@ export const Navbar = ({ user, isGuest }: NavbarProps) => {
         {/* BUSCADOR */}
         <div className="hidden md:flex flex-1 max-w-md mx-4">
           <form onSubmit={handleSearch} className="relative w-full group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 group-focus-within:text-orange-500 transition-colors" size={18} />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 group-focus-within:text-orange-500 transition-colors" size={20} />
             <input 
               type="text" 
               placeholder="Buscar anime..." 
