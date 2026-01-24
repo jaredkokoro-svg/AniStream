@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
-import { Play, Loader2, Flag, Share2, Server, CheckCircle, Info, ChevronDown, X } from 'lucide-react';
+import { Play, Loader2, Flag, Share2, Server, CheckCircle, Info, ChevronDown, X, Check } from 'lucide-react';
 import { Navbar } from '@/components/navbar';
 import { supabase } from '@/lib/supabase';
 import { getOrFetch } from '@/lib/smart-fetch';
@@ -11,26 +11,28 @@ export default function AnimeDetail() {
   const params = useParams();
   const id = params?.id as string;
 
-  // --- 1. ESTADOS DE DATOS ---
+  // --- ESTADOS ---
   const [info, setInfo] = useState<any>(null);
   const [loadingInfo, setLoadingInfo] = useState(true);
   
-  // --- 2. ESTADOS DE VIDEO ---
   const [currentEp, setCurrentEp] = useState<any>(null);
   const [serverList, setServerList] = useState<any[]>([]); 
   const [currentVideoUrl, setCurrentVideoUrl] = useState('');
   const [loadingVideo, setLoadingVideo] = useState(false);
 
-  // --- 3. ESTADOS DE USUARIO ---
   const [user, setUser] = useState<any>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [watchedEpisodes, setWatchedEpisodes] = useState<number[]>([]);
+  
+  // --- FAVORITOS (NUEVO) ---
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [loadingFav, setLoadingFav] = useState(false);
 
-  // --- 4. ESTADOS PARA TEMPORADAS (NUEVO) ---
+  // --- TEMPORADAS ---
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [isSeasonMenuOpen, setIsSeasonMenuOpen] = useState(false);
 
-  // A. CARGAR INFO
+  // 1. CARGAR INFO ANIME
   useEffect(() => {
     if (!id) return;
     const loadAnimeData = async () => {
@@ -40,7 +42,6 @@ export default function AnimeDetail() {
       });
       if (data) {
         setInfo(data);
-        // Si hay episodios con temporada definida, seleccionamos la primera que aparezca
         if (data.episodes && data.episodes.length > 0) {
            setSelectedSeason(data.episodes[0].season || 1);
         }
@@ -50,9 +51,9 @@ export default function AnimeDetail() {
     loadAnimeData();
   }, [id]);
 
-  // B. CARGAR USUARIO
+  // 2. CARGAR USUARIO, HISTORIAL Y FAVORITOS
   useEffect(() => {
-    const loadUserHistory = async () => {
+    const loadUserData = async () => {
       const mode = localStorage.getItem('userMode');
       let currentUser = null;
       if (mode === 'registered') {
@@ -64,34 +65,76 @@ export default function AnimeDetail() {
       } else {
         setIsGuest(true);
       }
+
       if (currentUser) {
-        const { data } = await supabase
+        // A. Cargar Historial
+        const { data: historyData } = await supabase
           .from('user_history')
           .select('episode_number')
           .eq('user_id', currentUser.id)
           .eq('anime_id', id);
-        if (data) setWatchedEpisodes(data.map(row => row.episode_number));
+        if (historyData) setWatchedEpisodes(historyData.map(row => row.episode_number));
+
+        // B. Cargar Estado de Favorito (¿Ya lo tengo en mi lista?)
+        const { data: favData } = await supabase
+          .from('user_favorites')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('anime_id', id)
+          .single();
+        
+        if (favData) setIsFavorite(true);
       }
     };
-    loadUserHistory();
+    loadUserData();
   }, [id]);
 
-  // --- LÓGICA DE TEMPORADAS ---
-  // Calculamos qué temporadas existen basándonos en los episodios
+  // --- LÓGICA DEL BOTÓN FAVORITOS (NUEVO) ---
+  const toggleFavorite = async () => {
+    if (!user) {
+      alert("Inicia sesión para guardar en tu lista.");
+      return;
+    }
+    setLoadingFav(true);
+
+    if (isFavorite) {
+      // Borrar
+      const { error } = await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('anime_id', id);
+      
+      if (!error) setIsFavorite(false);
+    } else {
+      // Agregar
+      const { error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: user.id,
+          anime_id: id,
+          title: info?.title,
+          poster: info?.poster,
+        });
+
+      if (!error) setIsFavorite(true);
+    }
+    setLoadingFav(false);
+  };
+
+  // --- CÁLCULO DE TEMPORADAS ---
   const seasons = useMemo(() => {
     if (!info?.episodes) return [1];
-    // Extraemos los números de temporada únicos (si no tienen, asumimos 1)
     const unique = new Set(info.episodes.map((e: any) => e.season || 1));
     return Array.from(unique).sort((a: any, b: any) => a - b);
   }, [info]);
 
-  // Filtramos los episodios para mostrar solo los de la temporada seleccionada
   const filteredEpisodes = useMemo(() => {
     if (!info?.episodes) return [];
     return info.episodes.filter((e: any) => (e.season || 1) === selectedSeason);
   }, [info, selectedSeason]);
 
-  // C. CARGAR EPISODIO
+  // --- CARGAR EPISODIO ---
   const loadEpisode = async (episode: any) => {
     if (!episode) return;
     
@@ -101,7 +144,6 @@ export default function AnimeDetail() {
     setServerList([]);
     setCurrentVideoUrl('');
 
-    // Si el episodio seleccionado es de otra temporada, cambiamos la vista automáticamente
     if ((episode.season || 1) !== selectedSeason) {
       setSelectedSeason(episode.season || 1);
     }
@@ -146,7 +188,7 @@ export default function AnimeDetail() {
       <main className="pt-16 w-full max-w-[1800px] mx-auto">
         <div className="flex flex-col lg:flex-row w-full">
           
-          {/* --- COLUMNA IZQUIERDA: REPRODUCTOR (75%) --- */}
+          {/* IZQUIERDA: REPRODUCTOR */}
           <div className="w-full lg:w-[75%] flex flex-col">
             <div className="relative w-full aspect-video bg-black shadow-[0_0_40px_rgba(234,88,12,0.1)] z-10">
               {loadingVideo ? (
@@ -199,7 +241,7 @@ export default function AnimeDetail() {
               </div>
             )}
 
-            {/* Info Anime */}
+            {/* INFO */}
             <div className="p-6 md:p-8 bg-[#0a0a0a] border-b border-gray-900">
               <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{info?.title}</h1>
               {currentEp && <p className="text-orange-500 font-bold text-sm mb-4">Viendo: S{currentEp.season || 1} E{currentEp.number}</p>}
@@ -217,10 +259,33 @@ export default function AnimeDetail() {
                 </div>
               </div>
 
+              {/* BOTONES DE ACCIÓN (AQUÍ ESTÁ LA CORRECCIÓN) */}
               <div className="flex items-center gap-4 mb-6 pb-6 border-b border-gray-800">
-                 <button className="text-gray-400 hover:text-white border border-gray-700 hover:border-white px-4 py-2.5 rounded-md text-sm font-bold uppercase flex items-center gap-2 transition">
-                    <Flag size={18} /> Mi Lista
+                 
+                 <button 
+                   onClick={toggleFavorite}
+                   disabled={loadingFav}
+                   className={`
+                     px-5 py-2.5 rounded-md text-sm font-bold uppercase flex items-center gap-2 transition-all border
+                     ${isFavorite 
+                       ? "bg-green-600/20 text-green-500 border-green-500/50 hover:bg-green-600/30" 
+                       : "text-gray-300 border-gray-700 hover:text-white hover:border-white"
+                     }
+                   `}
+                 >
+                    {loadingFav ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : isFavorite ? (
+                      <>
+                        <Check size={18} /> En mi Lista
+                      </>
+                    ) : (
+                      <>
+                        <Flag size={18} /> Mi Lista
+                      </>
+                    )}
                  </button>
+
                  <button className="ml-auto text-gray-400 hover:text-orange-500 transition">
                     <Share2 size={22} />
                  </button>
@@ -239,10 +304,8 @@ export default function AnimeDetail() {
             </div>
           </div>
 
-          {/* --- COLUMNA DERECHA: LISTA DE EPISODIOS CON TEMPORADAS --- */}
+          {/* DERECHA: LISTA TEMPORADAS */}
           <div className="w-full lg:w-[25%] bg-[#121212] border-l border-gray-800 flex flex-col h-auto lg:h-[calc(100vh-4rem)] lg:sticky lg:top-16 relative">
-            
-            {/* HEADER CON SELECTOR DE TEMPORADAS */}
             <div className="p-4 border-b border-gray-800 bg-[#121212] z-20 flex justify-between items-center shadow-md relative">
               <button 
                 onClick={() => setIsSeasonMenuOpen(!isSeasonMenuOpen)}
@@ -256,7 +319,6 @@ export default function AnimeDetail() {
                  {filteredEpisodes.length} Videos
               </span>
 
-              {/* MENÚ DESPLEGABLE DE TEMPORADAS */}
               {isSeasonMenuOpen && (
                 <div className="absolute top-full left-0 w-full bg-[#1a1a1a] border-t border-b border-gray-700 shadow-2xl animate-in slide-in-from-top-2 z-50">
                   <div className="flex items-center justify-between p-3 border-b border-gray-700 bg-[#222]">
@@ -265,7 +327,6 @@ export default function AnimeDetail() {
                   </div>
                   <div className="max-h-60 overflow-y-auto custom-scrollbar">
                     {seasons.map((season: any) => {
-                      // Contar episodios de esta temporada
                       const count = info?.episodes?.filter((e: any) => (e.season || 1) === season).length;
                       return (
                         <button
@@ -288,7 +349,6 @@ export default function AnimeDetail() {
               )}
             </div>
 
-            {/* LISTA DE EPISODIOS FILTRADA */}
             <div className="overflow-y-auto flex-1 p-2 space-y-2 custom-scrollbar">
               {filteredEpisodes.length > 0 ? (
                 filteredEpisodes.map((ep: any) => {
@@ -307,26 +367,26 @@ export default function AnimeDetail() {
                         }
                       `}
                     >
-                      {/* Thumbnail */}
                       <div className="relative w-28 h-16 bg-gray-800 rounded-sm overflow-hidden flex-shrink-0">
                         {ep.image ? (
-                           <img src={ep.image} alt={`Episodio ${ep.number}`} className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} />
+                           <img 
+                             src={ep.image} 
+                             alt={`Ep ${ep.number}`}
+                             className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} 
+                           />
                         ) : (
                            <div className="w-full h-full flex items-center justify-center text-gray-600 font-bold text-xs bg-gray-900">
                               EP {ep.number}
                            </div>
                         )}
-                        {/* Overlay Active */}
                         {isActive && (
                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                               <Play size={20} className="text-orange-500 fill-current animate-pulse" />
                            </div>
                         )}
-                        {/* Barra Visto */}
                         {isWatched && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-orange-500"></div>}
                       </div>
 
-                      {/* Info */}
                       <div className="flex flex-col justify-center min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className={`text-xs font-bold truncate ${isActive ? "text-orange-500" : "text-gray-300 group-hover:text-white"}`}>
@@ -345,7 +405,7 @@ export default function AnimeDetail() {
                 })
               ) : (
                  <div className="p-8 text-center text-gray-500 text-sm">
-                   No hay episodios disponibles para esta temporada.
+                   No hay episodios disponibles.
                  </div>
               )}
             </div>
