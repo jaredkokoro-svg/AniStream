@@ -85,7 +85,7 @@ export default function FavoritesPage() {
             </div>
             <h2 className="text-xl font-bold mb-2">Tu lista está vacía</h2>
             <p className="text-gray-400 max-w-md">
-              Aún no has guardado ningún anime. Ve al inicio y dale al botón "+ Mi Lista" en tus series favoritas.
+              Aún no has guardado ningún anime. Ve al inicio y dale al botón &quot;+ Mi Lista&quot; en tus series favoritas.
             </p>
           </div>
         )}

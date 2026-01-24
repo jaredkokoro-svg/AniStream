@@ -310,7 +310,7 @@ export default function AnimeDetail() {
                       {/* Thumbnail */}
                       <div className="relative w-28 h-16 bg-gray-800 rounded-sm overflow-hidden flex-shrink-0">
                         {ep.image ? (
-                           <img src={ep.image} className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} />
+                           <img src={ep.image} alt={`Episodio ${ep.number}`} className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} />
                         ) : (
                            <div className="w-full h-full flex items-center justify-center text-gray-600 font-bold text-xs bg-gray-900">
                               EP {ep.number}
