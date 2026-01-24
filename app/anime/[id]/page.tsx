@@ -1,68 +1,128 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, Play, Loader2, Info, PlayCircle, Server, Star, ChevronLeft, ChevronRight } from 'lucide-react';
-import Link from 'next/link';
-// 👇 1. IMPORTAMOS NUESTRA FUNCIÓN INTELIGENTE
+import { Play, Loader2, Flag, Share2, Server, CheckCircle, Info, ChevronDown, X } from 'lucide-react';
+import { Navbar } from '@/components/navbar';
+import { supabase } from '@/lib/supabase';
 import { getOrFetch } from '@/lib/smart-fetch';
 
 export default function AnimeDetail() {
   const params = useParams();
   const id = params?.id as string;
 
+  // --- 1. ESTADOS DE DATOS ---
   const [info, setInfo] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingInfo, setLoadingInfo] = useState(true);
   
+  // --- 2. ESTADOS DE VIDEO ---
   const [currentEp, setCurrentEp] = useState<any>(null);
   const [serverList, setServerList] = useState<any[]>([]); 
   const [currentVideoUrl, setCurrentVideoUrl] = useState('');
   const [loadingVideo, setLoadingVideo] = useState(false);
 
-  // 👇 2. MODIFICAMOS EL EFECTO PARA USAR EL CEREBRO (getOrFetch)
+  // --- 3. ESTADOS DE USUARIO ---
+  const [user, setUser] = useState<any>(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [watchedEpisodes, setWatchedEpisodes] = useState<number[]>([]);
+
+  // --- 4. ESTADOS PARA TEMPORADAS (NUEVO) ---
+  const [selectedSeason, setSelectedSeason] = useState<number>(1);
+  const [isSeasonMenuOpen, setIsSeasonMenuOpen] = useState(false);
+
+  // A. CARGAR INFO
   useEffect(() => {
     if (!id) return;
-
     const loadAnimeData = async () => {
-      // Usamos getOrFetch:
-      // Clave: "anime/nombre-del-anime"
-      // Fetcher: La función que descarga si no hay caché
       const data = await getOrFetch(`anime/${id}`, async () => {
         const res = await fetch(`/api/info?id=${id}`);
         return await res.json();
       });
-
       if (data) {
         setInfo(data);
-        setLoading(false);
+        // Si hay episodios con temporada definida, seleccionamos la primera que aparezca
+        if (data.episodes && data.episodes.length > 0) {
+           setSelectedSeason(data.episodes[0].season || 1);
+        }
+        setLoadingInfo(false);
       }
     };
-
     loadAnimeData();
   }, [id]);
 
+  // B. CARGAR USUARIO
+  useEffect(() => {
+    const loadUserHistory = async () => {
+      const mode = localStorage.getItem('userMode');
+      let currentUser = null;
+      if (mode === 'registered') {
+        const userData = localStorage.getItem('userData');
+        if (userData) {
+          currentUser = JSON.parse(userData);
+          setUser(currentUser);
+        }
+      } else {
+        setIsGuest(true);
+      }
+      if (currentUser) {
+        const { data } = await supabase
+          .from('user_history')
+          .select('episode_number')
+          .eq('user_id', currentUser.id)
+          .eq('anime_id', id);
+        if (data) setWatchedEpisodes(data.map(row => row.episode_number));
+      }
+    };
+    loadUserHistory();
+  }, [id]);
+
+  // --- LÓGICA DE TEMPORADAS ---
+  // Calculamos qué temporadas existen basándonos en los episodios
+  const seasons = useMemo(() => {
+    if (!info?.episodes) return [1];
+    // Extraemos los números de temporada únicos (si no tienen, asumimos 1)
+    const unique = new Set(info.episodes.map((e: any) => e.season || 1));
+    return Array.from(unique).sort((a: any, b: any) => a - b);
+  }, [info]);
+
+  // Filtramos los episodios para mostrar solo los de la temporada seleccionada
+  const filteredEpisodes = useMemo(() => {
+    if (!info?.episodes) return [];
+    return info.episodes.filter((e: any) => (e.season || 1) === selectedSeason);
+  }, [info, selectedSeason]);
+
+  // C. CARGAR EPISODIO
   const loadEpisode = async (episode: any) => {
     if (!episode) return;
     
-    // Scroll suave hacia arriba para ver el video
     window.scrollTo({ top: 0, behavior: 'smooth' });
-
     setCurrentEp(episode);
     setLoadingVideo(true);
     setServerList([]);
     setCurrentVideoUrl('');
 
+    // Si el episodio seleccionado es de otra temporada, cambiamos la vista automáticamente
+    if ((episode.season || 1) !== selectedSeason) {
+      setSelectedSeason(episode.season || 1);
+    }
+
+    if (user && !watchedEpisodes.includes(episode.number)) {
+      setWatchedEpisodes(prev => [...prev, episode.number]);
+      supabase.from('user_history').insert({
+        user_id: user.id,
+        anime_id: id,
+        episode_number: episode.number,
+        anime_title: info?.title || id,
+        watched_at: new Date().toISOString()
+      }).then();
+    }
+
     try {
-      // NOTA: Los videos caducan rápido, por eso NO los guardamos en caché permanente igual que la info.
-      // Los pedimos frescos siempre.
       const res = await fetch(`/api/video?id=${id}&ep=${episode.number}`);
       const data = await res.json();
-      
       if (data.servers && data.servers.length > 0) {
         setServerList(data.servers);
         setCurrentVideoUrl(data.servers[0].url);
-      } else {
-        alert('No hay servidores disponibles.');
       }
     } catch (error) {
       console.error(error);
@@ -71,11 +131,7 @@ export default function AnimeDetail() {
     }
   };
 
-  // --- LÓGICA DE NAVEGACIÓN ---
-  const nextEp = currentEp ? info?.episodes?.find((e: any) => e.number === currentEp.number + 1) : null;
-  const prevEp = currentEp ? info?.episodes?.find((e: any) => e.number === currentEp.number - 1) : null;
-
-  if (loading) {
+  if (loadingInfo) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <Loader2 className="animate-spin text-orange-600" size={50} />
@@ -84,168 +140,226 @@ export default function AnimeDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white relative overflow-x-hidden">
-      
-      {/* FONDO INMERSIVO (Backdrop) */}
-      <div className="absolute top-0 left-0 w-full h-[60vh] -z-10">
-        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-[#0a0a0a]/80 to-[#0a0a0a]" />
-        <img src={info?.poster} alt="Fondo Anime" className="w-full h-full object-cover opacity-30 blur-2xl" />
-      </div>
+    <div className="min-h-screen bg-black text-white font-sans">
+      <Navbar user={user} isGuest={isGuest} />
 
-      {/* NAVBAR SIMPLE */}
-      <div className="p-6 flex items-center gap-4 z-10 relative">
-        <Link href="/" className="p-3 bg-black/50 hover:bg-orange-600 rounded-full transition-colors backdrop-blur-md group">
-          <ArrowLeft size={20} className="group-hover:scale-110 transition-transform" />
-        </Link>
-        <h1 className="text-2xl font-black tracking-tight drop-shadow-lg truncate">{info?.title}</h1>
-      </div>
-
-      <div className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-10 z-10 relative">
-        
-        {/* COLUMNA IZQUIERDA: VIDEO Y DETALLES */}
-        <div className="lg:col-span-8 space-y-6">
+      <main className="pt-16 w-full max-w-[1800px] mx-auto">
+        <div className="flex flex-col lg:flex-row w-full">
           
-          {/* REPRODUCTOR ESTILIZADO */}
-          <div className="aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl shadow-orange-900/20 border border-neutral-800 relative group">
-            {loadingVideo ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-neutral-900">
-                <Loader2 className="animate-spin text-orange-500" size={48} />
-                <p className="text-neutral-400 font-medium animate-pulse">Conectando con servidores...</p>
-              </div>
-            ) : currentVideoUrl ? (
-              <iframe 
-                src={currentVideoUrl} 
-                className="w-full h-full" 
-                allowFullScreen 
-                allow="autoplay; encrypted-media"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              // ESTADO INICIAL
-              <div className="absolute inset-0 flex items-center justify-center bg-neutral-900">
-                <img src={info?.poster} alt="Portada Anime" className="absolute inset-0 w-full h-full object-cover opacity-20" />
-                <div className="z-10 text-center">
-                  <PlayCircle size={64} className="mx-auto text-orange-500 mb-4 drop-shadow-lg animate-bounce" />
-                  <p className="text-xl font-bold">Selecciona un episodio</p>
+          {/* --- COLUMNA IZQUIERDA: REPRODUCTOR (75%) --- */}
+          <div className="w-full lg:w-[75%] flex flex-col">
+            <div className="relative w-full aspect-video bg-black shadow-[0_0_40px_rgba(234,88,12,0.1)] z-10">
+              {loadingVideo ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0a]">
+                  <Loader2 className="animate-spin text-orange-500 mb-4" size={48} />
+                  <p className="text-gray-400 font-medium animate-pulse">Conectando servidores...</p>
                 </div>
+              ) : currentVideoUrl ? (
+                <iframe 
+                  src={currentVideoUrl} 
+                  className="w-full h-full"
+                  allowFullScreen
+                  allow="autoplay; encrypted-media"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div 
+                  className="absolute inset-0 bg-cover bg-center cursor-pointer group"
+                  style={{ backgroundImage: `url('${info?.banner || info?.poster}')` }}
+                >
+                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center group-hover:bg-black/40 transition-all">
+                    <p className="text-xl font-bold text-white mb-4">Selecciona un episodio para empezar</p>
+                    <div className="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform shadow-xl">
+                      <Play fill="white" className="ml-1" size={32} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Servidores */}
+            {serverList.length > 0 && (
+              <div className="bg-[#1a1a1a] p-3 flex items-center gap-3 overflow-x-auto border-b border-gray-800">
+                <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 flex-shrink-0">
+                  <Server size={14}/> Fuentes:
+                </span>
+                {serverList.map((server, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setCurrentVideoUrl(server.url)}
+                    className={`px-3 py-1 rounded-sm text-xs font-bold uppercase tracking-wide transition-colors flex-shrink-0 ${
+                      currentVideoUrl === server.url
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+                    }`}
+                  >
+                    {server.name}
+                  </button>
+                ))}
               </div>
             )}
-          </div>
 
-          {/* BARRA DE CONTROL (ANTERIOR / SIGUIENTE) */}
-          {currentEp && (
-            <div className="flex items-center justify-between gap-4">
-              <button 
-                onClick={() => prevEp && loadEpisode(prevEp)}
-                disabled={!prevEp}
-                className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl font-bold transition-all ${
-                  prevEp 
-                    ? 'bg-neutral-800 hover:bg-neutral-700 hover:text-orange-400 cursor-pointer' 
-                    : 'bg-neutral-900/50 text-neutral-600 cursor-not-allowed'
-                }`}
-              >
-                <ChevronLeft size={20} /> Anterior
-              </button>
-
-              <div className="px-4 py-2 bg-neutral-900 rounded-lg text-sm font-bold text-orange-500 border border-neutral-800">
-                Episodio {currentEp.number}
+            {/* Info Anime */}
+            <div className="p-6 md:p-8 bg-[#0a0a0a] border-b border-gray-900">
+              <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{info?.title}</h1>
+              {currentEp && <p className="text-orange-500 font-bold text-sm mb-4">Viendo: S{currentEp.season || 1} E{currentEp.number}</p>}
+              
+              <div className="flex flex-wrap items-center gap-4 text-sm text-gray-400 mb-6">
+                <span className="bg-gray-800 px-2 py-0.5 rounded text-xs text-white border border-gray-700 uppercase">{info?.type || 'TV'}</span>
+                <span className="hidden md:inline">•</span>
+                <span>{info?.status}</span>
+                <div className="flex gap-2 ml-2 flex-wrap">
+                  {info?.genres?.slice(0, 3).map((g: string) => (
+                    <span key={g} className="text-xs text-gray-500 border border-gray-800 px-2 py-0.5 rounded">
+                      {g}
+                    </span>
+                  ))}
+                </div>
               </div>
 
+              <div className="flex items-center gap-4 mb-6 pb-6 border-b border-gray-800">
+                 <button className="text-gray-400 hover:text-white border border-gray-700 hover:border-white px-4 py-2.5 rounded-md text-sm font-bold uppercase flex items-center gap-2 transition">
+                    <Flag size={18} /> Mi Lista
+                 </button>
+                 <button className="ml-auto text-gray-400 hover:text-orange-500 transition">
+                    <Share2 size={22} />
+                 </button>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-8">
+                 <div className="md:col-span-2">
+                    <h3 className="text-gray-500 text-xs font-bold uppercase mb-3 tracking-wider flex items-center gap-2">
+                      <Info size={14}/> Sinopsis
+                    </h3>
+                    <p className="text-gray-300 text-sm md:text-base leading-relaxed">
+                      {info?.description}
+                    </p>
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* --- COLUMNA DERECHA: LISTA DE EPISODIOS CON TEMPORADAS --- */}
+          <div className="w-full lg:w-[25%] bg-[#121212] border-l border-gray-800 flex flex-col h-auto lg:h-[calc(100vh-4rem)] lg:sticky lg:top-16 relative">
+            
+            {/* HEADER CON SELECTOR DE TEMPORADAS */}
+            <div className="p-4 border-b border-gray-800 bg-[#121212] z-20 flex justify-between items-center shadow-md relative">
               <button 
-                onClick={() => nextEp && loadEpisode(nextEp)}
-                disabled={!nextEp}
-                className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl font-bold transition-all ${
-                  nextEp 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-lg shadow-orange-900/20 cursor-pointer' 
-                    : 'bg-neutral-900/50 text-neutral-600 cursor-not-allowed'
-                }`}
+                onClick={() => setIsSeasonMenuOpen(!isSeasonMenuOpen)}
+                className="flex items-center gap-2 text-white font-bold text-sm uppercase tracking-wide hover:text-orange-500 transition-colors"
               >
-                Siguiente <ChevronRight size={20} />
+                Temporada {selectedSeason}
+                <ChevronDown size={16} className={`transition-transform duration-200 ${isSeasonMenuOpen ? 'rotate-180' : ''}`} />
               </button>
-            </div>
-          )}
 
-          {/* CONTROLES DE SERVIDOR */}
-          {serverList.length > 0 && (
-            <div className="flex flex-wrap gap-2 items-center bg-neutral-900/60 p-4 rounded-xl border border-neutral-800 backdrop-blur-sm">
-              <span className="text-xs font-bold text-neutral-400 uppercase flex items-center gap-2 mr-2">
-                <Server size={14}/> Servidores:
+              <span className="text-xs text-gray-500 font-bold">
+                 {filteredEpisodes.length} Videos
               </span>
-              {serverList.map((server, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setCurrentVideoUrl(server.url)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all uppercase tracking-wide ${
-                    currentVideoUrl === server.url
-                      ? 'bg-white text-black shadow-lg'
-                      : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400'
-                  }`}
-                >
-                  {server.name}
-                </button>
-              ))}
-            </div>
-          )}
 
-          {/* SINOPSIS */}
-          <div className="space-y-4 pt-4">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <Info className="text-orange-500" size={20}/> Sinopsis
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-xs font-bold px-3 py-1 bg-orange-600/20 text-orange-400 rounded-md border border-orange-500/20 uppercase">
-                {info?.type}
-              </span>
-              <span className="text-xs font-bold px-3 py-1 bg-green-600/20 text-green-400 rounded-md border border-green-500/20 uppercase">
-                {info?.status}
-              </span>
-              {info?.genres?.map((g: string) => (
-                <span key={g} className="text-xs font-bold px-3 py-1 bg-neutral-800 text-neutral-300 rounded-md border border-neutral-700">
-                  {g}
-                </span>
-              ))}
-            </div>
-            <p className="text-neutral-300 leading-relaxed text-lg">{info?.description}</p>
-          </div>
-        </div>
-
-        {/* COLUMNA DERECHA: LISTA DE EPISODIOS */}
-        <div className="lg:col-span-4 flex flex-col h-[600px] bg-neutral-900/40 rounded-2xl border border-neutral-800 overflow-hidden backdrop-blur-md">
-          <div className="p-4 border-b border-neutral-800 bg-neutral-900/80 sticky top-0 z-10">
-            <h3 className="font-bold text-lg flex items-center gap-2">
-              <Star className="text-orange-500 fill-orange-500" size={18} /> 
-              Episodios ({info?.episodes?.length})
-            </h3>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-            {info?.episodes?.map((ep: any) => (
-              <button
-                key={ep.number}
-                onClick={() => loadEpisode(ep)}
-                className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all group ${
-                  currentEp?.number === ep.number
-                    ? 'bg-gradient-to-r from-orange-600/20 to-transparent border-l-4 border-orange-500'
-                    : 'hover:bg-neutral-800 border-l-4 border-transparent'
-                }`}
-              >
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-colors ${
-                  currentEp?.number === ep.number ? 'bg-orange-600 text-white' : 'bg-neutral-800 text-neutral-500 group-hover:text-white group-hover:bg-neutral-700'
-                }`}>
-                  {ep.number}
+              {/* MENÚ DESPLEGABLE DE TEMPORADAS */}
+              {isSeasonMenuOpen && (
+                <div className="absolute top-full left-0 w-full bg-[#1a1a1a] border-t border-b border-gray-700 shadow-2xl animate-in slide-in-from-top-2 z-50">
+                  <div className="flex items-center justify-between p-3 border-b border-gray-700 bg-[#222]">
+                     <span className="text-xs font-bold text-gray-400 uppercase">Seleccionar Temporada</span>
+                     <button onClick={() => setIsSeasonMenuOpen(false)}><X size={14} className="text-gray-400"/></button>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                    {seasons.map((season: any) => {
+                      // Contar episodios de esta temporada
+                      const count = info?.episodes?.filter((e: any) => (e.season || 1) === season).length;
+                      return (
+                        <button
+                          key={season}
+                          onClick={() => {
+                            setSelectedSeason(season);
+                            setIsSeasonMenuOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-3 text-sm font-bold flex justify-between items-center hover:bg-[#333] transition-colors ${
+                            selectedSeason === season ? 'text-orange-500 bg-[#2a1b15]' : 'text-gray-300'
+                          }`}
+                        >
+                          <span>Temporada {season}</span>
+                          <span className="text-xs text-gray-500 font-normal">{count} Episodios</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="text-left">
-                  <span className={`block text-sm font-medium ${currentEp?.number === ep.number ? 'text-orange-400' : 'text-white'}`}>
-                    Episodio {ep.number}
-                  </span>
-                </div>
-                {currentEp?.number === ep.number && <Play size={16} className="ml-auto text-orange-500 animate-pulse"/>}
-              </button>
-            ))}
-          </div>
-        </div>
+              )}
+            </div>
 
-      </div>
+            {/* LISTA DE EPISODIOS FILTRADA */}
+            <div className="overflow-y-auto flex-1 p-2 space-y-2 custom-scrollbar">
+              {filteredEpisodes.length > 0 ? (
+                filteredEpisodes.map((ep: any) => {
+                  const isWatched = watchedEpisodes.includes(ep.number);
+                  const isActive = currentEp?.number === ep.number;
+
+                  return (
+                    <div 
+                      key={ep.number}
+                      onClick={() => loadEpisode(ep)}
+                      className={`
+                        group flex gap-3 p-2 rounded-md cursor-pointer transition-all relative overflow-hidden
+                        ${isActive 
+                          ? "bg-[#2a1b15] border-l-4 border-orange-600" 
+                          : "hover:bg-[#1a1a1a] border-l-4 border-transparent"
+                        }
+                      `}
+                    >
+                      {/* Thumbnail */}
+                      <div className="relative w-28 h-16 bg-gray-800 rounded-sm overflow-hidden flex-shrink-0">
+                        {ep.image ? (
+                           <img src={ep.image} className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} />
+                        ) : (
+                           <div className="w-full h-full flex items-center justify-center text-gray-600 font-bold text-xs bg-gray-900">
+                              EP {ep.number}
+                           </div>
+                        )}
+                        {/* Overlay Active */}
+                        {isActive && (
+                           <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                              <Play size={20} className="text-orange-500 fill-current animate-pulse" />
+                           </div>
+                        )}
+                        {/* Barra Visto */}
+                        {isWatched && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-orange-500"></div>}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex flex-col justify-center min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-bold truncate ${isActive ? "text-orange-500" : "text-gray-300 group-hover:text-white"}`}>
+                            Episodio {ep.number}
+                          </span>
+                          {isWatched && !isActive && (
+                             <CheckCircle size={12} className="text-green-500" />
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-500 truncate group-hover:text-gray-400">
+                          {ep.title || `Episodio ${ep.number}`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                 <div className="p-8 text-center text-gray-500 text-sm">
+                   No hay episodios disponibles para esta temporada.
+                 </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </main>
+      
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #121212; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #ea580c; }
+      `}</style>
     </div>
   );
 }
