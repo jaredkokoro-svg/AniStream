@@ -30,7 +30,7 @@ export const Navbar = ({ user, isGuest }: NavbarProps) => {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
-      router.push(`/?q=${encodeURIComponent(query)}`);
+      router.push(`/search?q=${encodeURIComponent(query)}`);
       setIsMobileMenuOpen(false);
     }
   };
