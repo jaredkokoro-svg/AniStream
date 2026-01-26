@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link'; // <--- IMPORTANTE: Importamos Link
 import { Play, Plus, Check, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -11,13 +12,12 @@ interface HeroSectionProps {
 
 export function HeroSection({ anime, user }: HeroSectionProps) {
   // Prioridad: Banner (Ancho) -> Imagen (Original) -> Poster (Vertical)
-  // Si usas una API como Jikan, intenta buscar la propiedad .jpg.large_image_url
   const bgImage = anime.banner || anime.image || anime.poster;
   
   const [isFavorite, setIsFavorite] = useState(false);
   const [loadingFav, setLoadingFav] = useState(false);
 
-  // Lógica de Favoritos (Intacta)
+  // Lógica de Favoritos
   useEffect(() => {
     const checkFavorite = async () => {
       if (!user) return;
@@ -63,26 +63,21 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
   return (
     <div className="relative w-full h-[85vh] md:h-[75vh] flex items-center overflow-hidden bg-black">
       
-      {/* 1. IMAGEN DE FONDO MEJORADA */}
-      {/* Usamos <img> en lugar de backgroundImage para mejor renderizado */}
+      {/* 1. IMAGEN DE FONDO */}
       <div className="absolute inset-0 select-none">
         <img 
           src={bgImage} 
           alt={anime.title}
-          className="w-full h-full object-cover opacity-60 scale-105" // scale-105 evita bordes blancos y da efecto zoom leve
+          className="w-full h-full object-cover opacity-60 scale-105"
         />
-        
-        {/* Truco: Si la imagen es muy mala, descomenta la siguiente línea para difuminarla un poco y que se vea 'aesthetic' */}
-        {/* <div className="absolute inset-0 backdrop-blur-[2px]"></div> */}
       </div>
 
-      {/* 2. CAPAS DE DEGRADADO (VIGNETTE) */}
-      {/* Esto oscurece los bordes y hace que la imagen se fusione con el fondo negro de la app */}
+      {/* 2. CAPAS DE DEGRADADO */}
       <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/40 to-transparent"></div>
       <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent"></div>
       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-transparent"></div>
 
-      {/* 3. CONTENIDO (TEXTO Y BOTONES) */}
+      {/* 3. CONTENIDO */}
       <div className="relative container mx-auto px-6 w-full flex flex-col md:flex-row items-end md:items-center justify-between mt-16 z-10">
         
         <div className="max-w-2xl space-y-6">
@@ -104,10 +99,15 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
           </p>
           
           <div className="flex items-center gap-4 pt-4">
-            <button className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3 rounded-lg font-bold flex items-center gap-2 transition transform hover:scale-105 shadow-xl shadow-orange-900/30">
-              <Play fill="currentColor" size={20} />
-              Ver Ahora
-            </button>
+            
+            {/* --- CORRECCIÓN AQUÍ: Agregamos Link --- */}
+            <Link href={`/anime/${anime.id}`}>
+              <button className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3 rounded-lg font-bold flex items-center gap-2 transition transform hover:scale-105 shadow-xl shadow-orange-900/30">
+                <Play fill="currentColor" size={20} />
+                Ver Ahora
+              </button>
+            </Link>
+            {/* --------------------------------------- */}
             
             <button 
               onClick={toggleFavorite}
@@ -135,17 +135,10 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
           </div>
         </div>
 
-        {/* SALUDO DE BIENVENIDA */}
-{/* ... código anterior del Lado Izquierdo ... */}
-
-        {/* LADO DERECHO: TARJETA DE BIENVENIDA ESTILO "BADGE" */}
+        {/* TARJETA DE BIENVENIDA (LADO DERECHO) */}
         {user && (
           <div className="hidden lg:flex flex-col items-end justify-center h-full pr-10 pointer-events-none select-none z-20 absolute right-0 top-0 bottom-0">
-            
-            {/* Tarjeta con efecto Glassmorphism (Vidrio) */}
             <div className="bg-black/40 backdrop-blur-xl border border-white/10 px-6 py-4 rounded-2xl flex items-center gap-4 shadow-2xl transform transition-all hover:scale-105 duration-500 group">
-               
-               {/* Texto Alineado */}
                <div className="flex flex-col text-right">
                   <span className="text-[13px] text-orange-400 font-bold tracking-[0.2em] uppercase mb-1">
                     Bienvenido
@@ -154,19 +147,13 @@ export function HeroSection({ anime, user }: HeroSectionProps) {
                     {user.user_metadata?.full_name?.split(' ')[0] || user.name || "Nakama"}
                   </span>
                </div>
-
-               {/* Separador vertical */}
                <div className="w-[1px] h-10 bg-gradient-to-b from-transparent via-white/20 to-transparent"></div>
-
-               {/* Avatar Decorativo (Con brillo) */}
                <div className="relative">
                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white font-bold shadow-lg shadow-orange-900/50 text-lg">
                     {user.user_metadata?.full_name ? user.user_metadata.full_name[0].toUpperCase() : "N"}
                  </div>
-                 {/* Punto de estado online */}
                  <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-black rounded-full"></div>
                </div>
-
             </div>
           </div>
         )}

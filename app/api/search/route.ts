@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
-// 1. IMPORTAMOS SUPABASE
 import { createClient } from '@supabase/supabase-js';
 
-// 2. CONFIGURAMOS LA CONEXIÓN
-// Asegúrate de que estas variables estén en tu .env.local
+// Configuración de Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -13,19 +11,15 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  // Limpiamos la búsqueda (minúsculas y sin espacios extra) para que sea uniforme
-  const query = searchParams.get('q')?.toLowerCase().trim();
+  const id = searchParams.get('id');
 
-  if (!query) {
-    return NextResponse.json({ error: 'Falta búsqueda' }, { status: 400 });
-  }
+  if (!id) return NextResponse.json({ error: 'Falta ID' }, { status: 400 });
 
-  // Creamos la LLAVE ÚNICA para la caché. Ej: "search:naruto"
-  const cacheKey = `search:${query}`;
+  const cacheKey = `anime:${id}`;
 
   try {
     // ---------------------------------------------------------
-    // A. PRIMERO PREGUNTAMOS A SUPABASE (LA MEMORIA)
+    // A. MEMORIA: Revisar Supabase primero
     // ---------------------------------------------------------
     const { data: cachedEntry } = await supabase
       .from('api_cache')
@@ -34,68 +28,124 @@ export async function GET(request: Request) {
       .single();
 
     if (cachedEntry && cachedEntry.data) {
-      console.log(`⚡ CACHÉ: Encontrado en Supabase: "${cacheKey}"`);
+      console.log(`⚡ CACHÉ HIT: Info recuperada para "${id}"`);
       return NextResponse.json(cachedEntry.data);
     }
 
     // ---------------------------------------------------------
-    // B. SI NO ESTÁ, HACEMOS EL SCRAPING (TU CÓDIGO ACTUAL)
+    // B. SCRAPING BLINDADO (Intenta múltiples caminos)
     // ---------------------------------------------------------
-    console.log(`🌐 INTERNET: Buscando fuera: "${query}"...`);
-    
-    const targetUrl = `https://www3.animeflv.net/browse?q=${encodeURIComponent(query)}`;
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-    
-    const response = await fetch(proxyUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
-      },
-      next: { revalidate: 0 }
-    });
+    console.log(`🌐 SCRAPING: Buscando info fresca para "${id}"...`);
+    const targetUrl = `https://www3.animeflv.net/anime/${id}`;
 
-    if (!response.ok) throw new Error(`Proxy falló: ${response.status}`);
+    // Lista de intentos en orden de prioridad
+    const strategies = [
+      // 1. CorsProxy.io (Suele ser rápido)
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      // 2. AllOrigins (Respaldo)
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+      // 3. Directo (Por si acaso el servidor no está bloqueado)
+      targetUrl 
+    ];
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const results: any[] = [];
+    let html = '';
+    let success = false;
 
-    $('.ListAnimes li').each((_, element) => {
-      const $el = $(element);
-      const id = $el.find('a').attr('href')?.split('/').pop() || '';
-      const title = $el.find('.Title').last().text().trim();
-      
-      let poster = $el.find('img').attr('src') || '';
-      if (poster.startsWith('/')) {
-        poster = `https://www3.animeflv.net${poster}`;
-      }
-
-      const type = $el.find('.Type').text().trim();
-
-      if (id && title) {
-        results.push({ id, title, image: poster, type });
-      }
-    });
-
-    // ---------------------------------------------------------
-    // C. GUARDAMOS EL RESULTADO EN SUPABASE (PARA LA PRÓXIMA)
-    // ---------------------------------------------------------
-    if (results.length > 0) {
-      const { error: insertError } = await supabase
-        .from('api_cache')
-        .insert({ 
-          key: cacheKey, 
-          data: results 
+    // Bucle de intentos: Si falla uno, prueba el siguiente
+    for (const url of strategies) {
+      try {
+        console.log(`Trying connection via: ${url.substring(0, 30)}...`);
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          signal: AbortSignal.timeout(5000) // 5 segundos máximo por intento
         });
 
-      if (!insertError) {
-        console.log(`💾 GUARDADO: "${cacheKey}" se guardó en la DB.`);
+        if (response.ok) {
+          html = await response.text();
+          // Verificamos que sea HTML válido y no un error del proxy
+          if (html.includes('<html') || html.includes('<!DOCTYPE')) {
+            success = true;
+            break; // ¡Éxito! Salimos del bucle
+          }
+        }
+      } catch (e) {
+        console.warn(`Falló intento con proxy, probando siguiente...`);
       }
     }
 
-    return NextResponse.json(results);
+    if (!success || !html) {
+      return NextResponse.json({ error: 'No se pudo conectar con ninguna fuente' }, { status: 503 });
+    }
+
+    // ---------------------------------------------------------
+    // C. PROCESAMIENTO (Cheerio)
+    // ---------------------------------------------------------
+    const $ = cheerio.load(html);
+    const title = $('h1.Title').text().trim();
+    
+    if (!title) {
+       return NextResponse.json({ error: 'Anime no encontrado o estructura cambió' }, { status: 404 });
+    }
+
+    // Corrección de imagen robusta
+    let poster = $('.Image figure img').attr('src') || '';
+    if (poster.startsWith('/')) {
+      poster = `https://www3.animeflv.net${poster}`;
+    }
+
+    const description = $('.Description p').text().trim();
+    const type = $('.Type').text().trim();
+    const genres = $('nav.Nvgnrs a').map((_, el) => $(el).text().trim()).get();
+    const status = $('.AnmStts span').text().trim();
+
+    // Extraer Episodios
+    const scripts = $('script').map((_, el) => $(el).html()).get();
+    const scriptWithEpisodes = scripts.find(s => s?.includes('var episodes ='));
+    
+    let episodes: any[] = [];
+    if (scriptWithEpisodes) {
+      const regex = /var episodes = (\[.*?\]);/s;
+      const match = scriptWithEpisodes.match(regex);
+      if (match && match[1]) {
+        const rawEpisodes = JSON.parse(match[1]);
+        episodes = rawEpisodes.map((ep: any[]) => ({
+          number: ep[0],
+          id: ep[1]
+        })).reverse();
+      }
+    }
+
+    const animeInfo = {
+      id,
+      title,
+      poster,
+      description,
+      type,
+      genres,
+      status,
+      episodes
+    };
+
+    // ---------------------------------------------------------
+    // D. GUARDADO EN SUPABASE
+    // ---------------------------------------------------------
+    if (episodes.length > 0) {
+      const { error } = await supabase
+        .from('api_cache')
+        .insert({ 
+          key: cacheKey, 
+          data: animeInfo 
+        });
+      
+      if (!error) console.log(`💾 INFO GUARDADA: "${id}" en Supabase.`);
+    }
+
+    return NextResponse.json(animeInfo);
 
   } catch (error) {
-    console.error('⚠️ Error controlado:', error);
-    return NextResponse.json([]); 
+    console.error('Error Info API:', error);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
   }
 }
