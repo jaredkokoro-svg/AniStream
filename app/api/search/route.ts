@@ -1,34 +1,59 @@
 import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
+// 1. IMPORTAMOS SUPABASE
+import { createClient } from '@supabase/supabase-js';
+
+// 2. CONFIGURAMOS LA CONEXIÓN
+// Asegúrate de que estas variables estén en tu .env.local
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const query = searchParams.get('q');
+  // Limpiamos la búsqueda (minúsculas y sin espacios extra) para que sea uniforme
+  const query = searchParams.get('q')?.toLowerCase().trim();
 
   if (!query) {
     return NextResponse.json({ error: 'Falta búsqueda' }, { status: 400 });
   }
 
+  // Creamos la LLAVE ÚNICA para la caché. Ej: "search:naruto"
+  const cacheKey = `search:${query}`;
+
   try {
-    const targetUrl = `https://www3.animeflv.net/browse?q=${encodeURIComponent(query)}`;
+    // ---------------------------------------------------------
+    // A. PRIMERO PREGUNTAMOS A SUPABASE (LA MEMORIA)
+    // ---------------------------------------------------------
+    const { data: cachedEntry } = await supabase
+      .from('api_cache')
+      .select('data')
+      .eq('key', cacheKey)
+      .single();
+
+    if (cachedEntry && cachedEntry.data) {
+      console.log(`⚡ CACHÉ: Encontrado en Supabase: "${cacheKey}"`);
+      return NextResponse.json(cachedEntry.data);
+    }
+
+    // ---------------------------------------------------------
+    // B. SI NO ESTÁ, HACEMOS EL SCRAPING (TU CÓDIGO ACTUAL)
+    // ---------------------------------------------------------
+    console.log(`🌐 INTERNET: Buscando fuera: "${query}"...`);
     
-    // 1. CAMBIO DE PROXY: Usamos 'allorigins' que es más amigable para servidores
+    const targetUrl = `https://www3.animeflv.net/browse?q=${encodeURIComponent(query)}`;
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
     
-    console.log(`🔌 Conectando a: ${proxyUrl}`);
-
     const response = await fetch(proxyUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
       },
-      next: { revalidate: 0 } // Evitamos caché vieja
+      next: { revalidate: 0 }
     });
 
-    if (!response.ok) {
-      throw new Error(`Proxy falló con status: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Proxy falló: ${response.status}`);
 
     const html = await response.text();
     const $ = cheerio.load(html);
@@ -37,10 +62,8 @@ export async function GET(request: Request) {
     $('.ListAnimes li').each((_, element) => {
       const $el = $(element);
       const id = $el.find('a').attr('href')?.split('/').pop() || '';
-      // Usamos .last() para evitar títulos duplicados
       const title = $el.find('.Title').last().text().trim();
       
-      // 2. CORRECCIÓN DE IMAGEN
       let poster = $el.find('img').attr('src') || '';
       if (poster.startsWith('/')) {
         poster = `https://www3.animeflv.net${poster}`;
@@ -49,22 +72,30 @@ export async function GET(request: Request) {
       const type = $el.find('.Type').text().trim();
 
       if (id && title) {
-        results.push({ 
-          id, 
-          title, 
-          image: poster, 
-          type 
-        });
+        results.push({ id, title, image: poster, type });
       }
     });
 
-    console.log(`✅ Encontrados: ${results.length}`);
+    // ---------------------------------------------------------
+    // C. GUARDAMOS EL RESULTADO EN SUPABASE (PARA LA PRÓXIMA)
+    // ---------------------------------------------------------
+    if (results.length > 0) {
+      const { error: insertError } = await supabase
+        .from('api_cache')
+        .insert({ 
+          key: cacheKey, 
+          data: results 
+        });
+
+      if (!insertError) {
+        console.log(`💾 GUARDADO: "${cacheKey}" se guardó en la DB.`);
+      }
+    }
+
     return NextResponse.json(results);
 
   } catch (error) {
-    console.error('⚠️ Error controlado en búsqueda:', error);
-    // 3. PROTECCIÓN: Si falla, devolvemos array vacío.
-    // Esto evita que tu página explote con error 500.
+    console.error('⚠️ Error controlado:', error);
     return NextResponse.json([]); 
   }
 }
