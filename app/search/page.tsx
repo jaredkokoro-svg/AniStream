@@ -54,7 +54,7 @@ export default function SearchPage() {
 
       <main className="container mx-auto px-4 pt-28 pb-10">
         <h1 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-2">
-          Resultados para: <span className="text-orange-500">"{query}"</span>
+          Resultados para: <span className="text-orange-500">&quot;{query}&quot;</span>
         </h1>
 
         {loading ? (
