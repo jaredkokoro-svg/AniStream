@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
-// 1. Importamos Supabase
 import { createClient } from '@supabase/supabase-js';
 
-// 2. Configuración (igual que en search)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -16,13 +14,10 @@ export async function GET(request: Request) {
 
   if (!id) return NextResponse.json({ error: 'Falta ID' }, { status: 400 });
 
-  // Clave única para la caché (Ej: "anime:one-piece-tv")
   const cacheKey = `anime:${id}`;
 
   try {
-    // ---------------------------------------------------------
-    // A. PRIMERO MIRAMOS EN SUPABASE (MEMORIA)
-    // ---------------------------------------------------------
+    // A. MEMORIA: Revisar Supabase primero
     const { data: cachedEntry } = await supabase
       .from('api_cache')
       .select('data')
@@ -34,35 +29,30 @@ export async function GET(request: Request) {
       return NextResponse.json(cachedEntry.data);
     }
 
-    // ---------------------------------------------------------
-    // B. SI NO ESTÁ, HACEMOS SCRAPING (INTERNET)
-    // ---------------------------------------------------------
-    console.log(`🌐 SCRAPING: Buscando info fresca para "${id}"...`);
-
+    // B. SCRAPING DIRECTO (Sin Proxies)
+    console.log(`🌐 SCRAPING DIRECTO: Buscando info fresca para "${id}"...`);
     const targetUrl = `https://www3.animeflv.net/anime/${id}`;
-    // Usamos allorigins para mantener consistencia con el buscador
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-    
-    const response = await fetch(proxyUrl, {
+
+    const response = await fetch(targetUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': 'https://www3.animeflv.net/'
       }
     });
 
-    if (!response.ok) throw new Error('Error al conectar con AnimeFLV');
+    if (!response.ok) {
+      return NextResponse.json({ error: 'Error de conexión con la fuente' }, { status: response.status });
+    }
 
     const html = await response.text();
     const $ = cheerio.load(html);
-
-    // -- Extracción de datos --
     const title = $('h1.Title').text().trim();
     
     if (!title) {
-       // Si falla, no guardamos en caché para no guardar basura
-       return NextResponse.json({ error: 'No se pudo leer el título' }, { status: 404 });
+       return NextResponse.json({ error: 'Anime no encontrado' }, { status: 404 });
     }
 
-    // Corrección de imagen
     let poster = $('.Image figure img').attr('src') || '';
     if (poster.startsWith('/')) {
       poster = `https://www3.animeflv.net${poster}`;
@@ -73,7 +63,6 @@ export async function GET(request: Request) {
     const genres = $('nav.Nvgnrs a').map((_, el) => $(el).text().trim()).get();
     const status = $('.AnmStts span').text().trim();
 
-    // Extraer Episodios
     const scripts = $('script').map((_, el) => $(el).html()).get();
     const scriptWithEpisodes = scripts.find(s => s?.includes('var episodes ='));
     
@@ -82,37 +71,22 @@ export async function GET(request: Request) {
       const regex = /var episodes = (\[.*?\]);/s;
       const match = scriptWithEpisodes.match(regex);
       if (match && match[1]) {
-        const rawEpisodes = JSON.parse(match[1]);
-        episodes = rawEpisodes.map((ep: any[]) => ({
-          number: ep[0],
-          id: ep[1]
-        })).reverse();
+        try {
+          const rawEpisodes = JSON.parse(match[1]);
+          episodes = rawEpisodes.map((ep: any[]) => ({
+            number: ep[0],
+            id: ep[1]
+          })).reverse();
+        } catch(e) {}
       }
     }
 
-    const animeInfo = {
-      id,
-      title,
-      poster,
-      description,
-      type,
-      genres,
-      status,
-      episodes
-    };
+    const animeInfo = { id, title, poster, description, type, genres, status, episodes };
 
-    // ---------------------------------------------------------
-    // C. GUARDAMOS EN SUPABASE
-    // ---------------------------------------------------------
+    // C. GUARDADO EN SUPABASE
     if (episodes.length > 0) {
-      const { error } = await supabase
-        .from('api_cache')
-        .insert({ 
-          key: cacheKey, 
-          data: animeInfo 
-        });
-      
-      if (!error) console.log(`💾 INFO GUARDADA: "${id}" en Supabase.`);
+      await supabase.from('api_cache').insert({ key: cacheKey, data: animeInfo });
+      console.log(`💾 INFO GUARDADA: "${id}" en Supabase.`);
     }
 
     return NextResponse.json(animeInfo);
