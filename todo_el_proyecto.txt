@@ -1,0 +1,2171 @@
+
+
+=== FILE: app/anime/[id]/page.tsx ===
+'use client';
+
+import { useEffect, useState, useMemo } from 'react';
+import { useParams } from 'next/navigation';
+import { Play, Loader2, Flag, Share2, Server, CheckCircle, Info, ChevronDown, X, Check } from 'lucide-react';
+import { Navbar } from '@/components/navbar';
+import { supabase } from '@/lib/supabase';
+import { getOrFetch } from '@/lib/smart-fetch';
+
+export default function AnimeDetail() {
+  const params = useParams();
+  const id = params?.id as string;
+
+  // --- ESTADOS ---
+  const [info, setInfo] = useState<any>(null);
+  const [loadingInfo, setLoadingInfo] = useState(true);
+  
+  const [currentEp, setCurrentEp] = useState<any>(null);
+  const [serverList, setServerList] = useState<any[]>([]); 
+  const [currentVideoUrl, setCurrentVideoUrl] = useState('');
+  const [loadingVideo, setLoadingVideo] = useState(false);
+
+  const [user, setUser] = useState<any>(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [watchedEpisodes, setWatchedEpisodes] = useState<number[]>([]);
+  
+  // --- FAVORITOS (NUEVO) ---
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [loadingFav, setLoadingFav] = useState(false);
+
+  // --- TEMPORADAS ---
+  const [selectedSeason, setSelectedSeason] = useState<number>(1);
+  const [isSeasonMenuOpen, setIsSeasonMenuOpen] = useState(false);
+
+  // 1. CARGAR INFO ANIME
+  useEffect(() => {
+    if (!id) return;
+    const loadAnimeData = async () => {
+      const data = await getOrFetch(`anime/${id}`, async () => {
+        const res = await fetch(`/api/info?id=${id}`);
+        return await res.json();
+      });
+      if (data) {
+        setInfo(data);
+        if (data.episodes && data.episodes.length > 0) {
+           setSelectedSeason(data.episodes[0].season || 1);
+        }
+        setLoadingInfo(false);
+      }
+    };
+    loadAnimeData();
+  }, [id]);
+
+  // 2. CARGAR USUARIO, HISTORIAL Y FAVORITOS
+  useEffect(() => {
+    const loadUserData = async () => {
+      const mode = localStorage.getItem('userMode');
+      let currentUser = null;
+      if (mode === 'registered') {
+        const userData = localStorage.getItem('userData');
+        if (userData) {
+          currentUser = JSON.parse(userData);
+          setUser(currentUser);
+        }
+      } else {
+        setIsGuest(true);
+      }
+
+      if (currentUser) {
+        // A. Cargar Historial
+        const { data: historyData } = await supabase
+          .from('user_history')
+          .select('episode_number')
+          .eq('user_id', currentUser.id)
+          .eq('anime_id', id);
+        if (historyData) setWatchedEpisodes(historyData.map(row => row.episode_number));
+
+        // B. Cargar Estado de Favorito (¿Ya lo tengo en mi lista?)
+        const { data: favData } = await supabase
+          .from('user_favorites')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('anime_id', id)
+          .single();
+        
+        if (favData) setIsFavorite(true);
+      }
+    };
+    loadUserData();
+  }, [id]);
+
+  // --- LÓGICA DEL BOTÓN FAVORITOS (NUEVO) ---
+  const toggleFavorite = async () => {
+    if (!user) {
+      alert("Inicia sesión para guardar en tu lista.");
+      return;
+    }
+    setLoadingFav(true);
+
+    if (isFavorite) {
+      // Borrar
+      const { error } = await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('anime_id', id);
+      
+      if (!error) setIsFavorite(false);
+    } else {
+      // Agregar
+      const { error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: user.id,
+          anime_id: id,
+          title: info?.title,
+          poster: info?.poster,
+        });
+
+      if (!error) setIsFavorite(true);
+    }
+    setLoadingFav(false);
+  };
+
+  // --- CÁLCULO DE TEMPORADAS ---
+  const seasons = useMemo(() => {
+    if (!info?.episodes) return [1];
+    const unique = new Set(info.episodes.map((e: any) => e.season || 1));
+    return Array.from(unique).sort((a: any, b: any) => a - b);
+  }, [info]);
+
+  const filteredEpisodes = useMemo(() => {
+    if (!info?.episodes) return [];
+    return info.episodes.filter((e: any) => (e.season || 1) === selectedSeason);
+  }, [info, selectedSeason]);
+
+  // --- CARGAR EPISODIO ---
+  const loadEpisode = async (episode: any) => {
+    if (!episode) return;
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setCurrentEp(episode);
+    setLoadingVideo(true);
+    setServerList([]);
+    setCurrentVideoUrl('');
+
+    if ((episode.season || 1) !== selectedSeason) {
+      setSelectedSeason(episode.season || 1);
+    }
+
+    if (user && !watchedEpisodes.includes(episode.number)) {
+      setWatchedEpisodes(prev => [...prev, episode.number]);
+      supabase.from('user_history').insert({
+        user_id: user.id,
+        anime_id: id,
+        episode_number: episode.number,
+        anime_title: info?.title || id,
+        watched_at: new Date().toISOString()
+      }).then();
+    }
+
+    try {
+      const res = await fetch(`/api/video?id=${id}&ep=${episode.number}`);
+      const data = await res.json();
+      if (data.servers && data.servers.length > 0) {
+        setServerList(data.servers);
+        setCurrentVideoUrl(data.servers[0].url);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingVideo(false);
+    }
+  };
+
+  if (loadingInfo) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <Loader2 className="animate-spin text-orange-600" size={50} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-white font-sans">
+      <Navbar user={user} isGuest={isGuest} />
+
+      <main className="pt-16 w-full max-w-[1800px] mx-auto">
+        <div className="flex flex-col lg:flex-row w-full">
+          
+          {/* IZQUIERDA: REPRODUCTOR */}
+          <div className="w-full lg:w-[75%] flex flex-col">
+            <div className="relative w-full aspect-video bg-black shadow-[0_0_40px_rgba(234,88,12,0.1)] z-10">
+              {loadingVideo ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0a]">
+                  <Loader2 className="animate-spin text-orange-500 mb-4" size={48} />
+                  <p className="text-gray-400 font-medium animate-pulse">Conectando servidores...</p>
+                </div>
+              ) : currentVideoUrl ? (
+                <iframe 
+                  src={currentVideoUrl} 
+                  className="w-full h-full"
+                  allowFullScreen
+                  allow="autoplay; encrypted-media"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div 
+                  className="absolute inset-0 bg-cover bg-center cursor-pointer group"
+                  style={{ backgroundImage: `url('${info?.banner || info?.poster}')` }}
+                >
+                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center group-hover:bg-black/40 transition-all">
+                    <p className="text-xl font-bold text-white mb-4">Selecciona un episodio para empezar</p>
+                    <div className="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform shadow-xl">
+                      <Play fill="white" className="ml-1" size={32} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Servidores */}
+            {serverList.length > 0 && (
+              <div className="bg-[#1a1a1a] p-3 flex items-center gap-3 overflow-x-auto border-b border-gray-800">
+                <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 flex-shrink-0">
+                  <Server size={14}/> Fuentes:
+                </span>
+                {serverList.map((server, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setCurrentVideoUrl(server.url)}
+                    className={`px-3 py-1 rounded-sm text-xs font-bold uppercase tracking-wide transition-colors flex-shrink-0 ${
+                      currentVideoUrl === server.url
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+                    }`}
+                  >
+                    {server.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* INFO */}
+            <div className="p-6 md:p-8 bg-[#0a0a0a] border-b border-gray-900">
+              <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{info?.title}</h1>
+              {currentEp && <p className="text-orange-500 font-bold text-sm mb-4">Viendo: S{currentEp.season || 1} E{currentEp.number}</p>}
+              
+              <div className="flex flex-wrap items-center gap-4 text-sm text-gray-400 mb-6">
+                <span className="bg-gray-800 px-2 py-0.5 rounded text-xs text-white border border-gray-700 uppercase">{info?.type || 'TV'}</span>
+                <span className="hidden md:inline">•</span>
+                <span>{info?.status}</span>
+                <div className="flex gap-2 ml-2 flex-wrap">
+                  {info?.genres?.slice(0, 3).map((g: string) => (
+                    <span key={g} className="text-xs text-gray-500 border border-gray-800 px-2 py-0.5 rounded">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* BOTONES DE ACCIÓN (AQUÍ ESTÁ LA CORRECCIÓN) */}
+              <div className="flex items-center gap-4 mb-6 pb-6 border-b border-gray-800">
+                 
+                 <button 
+                   onClick={toggleFavorite}
+                   disabled={loadingFav}
+                   className={`
+                     px-5 py-2.5 rounded-md text-sm font-bold uppercase flex items-center gap-2 transition-all border
+                     ${isFavorite 
+                       ? "bg-green-600/20 text-green-500 border-green-500/50 hover:bg-green-600/30" 
+                       : "text-gray-300 border-gray-700 hover:text-white hover:border-white"
+                     }
+                   `}
+                 >
+                    {loadingFav ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : isFavorite ? (
+                      <>
+                        <Check size={18} /> En mi Lista
+                      </>
+                    ) : (
+                      <>
+                        <Flag size={18} /> Mi Lista
+                      </>
+                    )}
+                 </button>
+
+                 <button className="ml-auto text-gray-400 hover:text-orange-500 transition">
+                    <Share2 size={22} />
+                 </button>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-8">
+                 <div className="md:col-span-2">
+                    <h3 className="text-gray-500 text-xs font-bold uppercase mb-3 tracking-wider flex items-center gap-2">
+                      <Info size={14}/> Sinopsis
+                    </h3>
+                    <p className="text-gray-300 text-sm md:text-base leading-relaxed">
+                      {info?.description}
+                    </p>
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* DERECHA: LISTA TEMPORADAS */}
+          <div className="w-full lg:w-[25%] bg-[#121212] border-l border-gray-800 flex flex-col h-auto lg:h-[calc(100vh-4rem)] lg:sticky lg:top-16 relative">
+            <div className="p-4 border-b border-gray-800 bg-[#121212] z-20 flex justify-between items-center shadow-md relative">
+              <button 
+                onClick={() => setIsSeasonMenuOpen(!isSeasonMenuOpen)}
+                className="flex items-center gap-2 text-white font-bold text-sm uppercase tracking-wide hover:text-orange-500 transition-colors"
+              >
+                Temporada {selectedSeason}
+                <ChevronDown size={16} className={`transition-transform duration-200 ${isSeasonMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              <span className="text-xs text-gray-500 font-bold">
+                 {filteredEpisodes.length} Videos
+              </span>
+
+              {isSeasonMenuOpen && (
+                <div className="absolute top-full left-0 w-full bg-[#1a1a1a] border-t border-b border-gray-700 shadow-2xl animate-in slide-in-from-top-2 z-50">
+                  <div className="flex items-center justify-between p-3 border-b border-gray-700 bg-[#222]">
+                     <span className="text-xs font-bold text-gray-400 uppercase">Seleccionar Temporada</span>
+                     <button onClick={() => setIsSeasonMenuOpen(false)}><X size={14} className="text-gray-400"/></button>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                    {seasons.map((season: any) => {
+                      const count = info?.episodes?.filter((e: any) => (e.season || 1) === season).length;
+                      return (
+                        <button
+                          key={season}
+                          onClick={() => {
+                            setSelectedSeason(season);
+                            setIsSeasonMenuOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-3 text-sm font-bold flex justify-between items-center hover:bg-[#333] transition-colors ${
+                            selectedSeason === season ? 'text-orange-500 bg-[#2a1b15]' : 'text-gray-300'
+                          }`}
+                        >
+                          <span>Temporada {season}</span>
+                          <span className="text-xs text-gray-500 font-normal">{count} Episodios</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-2 space-y-2 custom-scrollbar">
+              {filteredEpisodes.length > 0 ? (
+                filteredEpisodes.map((ep: any) => {
+                  const isWatched = watchedEpisodes.includes(ep.number);
+                  const isActive = currentEp?.number === ep.number;
+
+                  return (
+                    <div 
+                      key={ep.number}
+                      onClick={() => loadEpisode(ep)}
+                      className={`
+                        group flex gap-3 p-2 rounded-md cursor-pointer transition-all relative overflow-hidden
+                        ${isActive 
+                          ? "bg-[#2a1b15] border-l-4 border-orange-600" 
+                          : "hover:bg-[#1a1a1a] border-l-4 border-transparent"
+                        }
+                      `}
+                    >
+                      <div className="relative w-28 h-16 bg-gray-800 rounded-sm overflow-hidden flex-shrink-0">
+                        {ep.image ? (
+                           <img 
+                             src={ep.image} 
+                             alt={`Ep ${ep.number}`}
+                             className={`w-full h-full object-cover ${isWatched && !isActive ? "opacity-50 grayscale" : ""}`} 
+                           />
+                        ) : (
+                           <div className="w-full h-full flex items-center justify-center text-gray-600 font-bold text-xs bg-gray-900">
+                              EP {ep.number}
+                           </div>
+                        )}
+                        {isActive && (
+                           <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                              <Play size={20} className="text-orange-500 fill-current animate-pulse" />
+                           </div>
+                        )}
+                        {isWatched && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-orange-500"></div>}
+                      </div>
+
+                      <div className="flex flex-col justify-center min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-bold truncate ${isActive ? "text-orange-500" : "text-gray-300 group-hover:text-white"}`}>
+                            Episodio {ep.number}
+                          </span>
+                          {isWatched && !isActive && (
+                             <CheckCircle size={12} className="text-green-500" />
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-500 truncate group-hover:text-gray-400">
+                          {ep.title || `Episodio ${ep.number}`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                 <div className="p-8 text-center text-gray-500 text-sm">
+                   No hay episodios disponibles.
+                 </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </main>
+      
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #121212; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #ea580c; }
+      `}</style>
+    </div>
+  );
+}
+
+=== FILE: app/api/browse/route.ts ===
+import { NextResponse } from 'next/server';
+import * as cheerio from 'cheerio';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const genre = searchParams.get('genre') || 'all';
+  const order = searchParams.get('order') || 'default';
+
+  try {
+    // Construimos la URL de AnimeFLV con el filtro
+    let targetUrl = `https://www3.animeflv.net/browse?order=${order}`;
+    if (genre !== 'all') {
+      targetUrl += `&genre=${genre}`;
+    }
+
+    const url = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+    
+    const response = await fetch(url);
+    const html = await response.text();
+    const $ = cheerio.load(html);
+
+    const animes: any[] = [];
+
+    $('article.Anime').each((_, element) => {
+      const $el = $(element);
+      const id = $el.find('a').attr('href')?.split('/anime/')[1] || '';
+      const title = $el.find('.Title').text().trim();
+      let poster = $el.find('img').attr('src') || '';
+      if (poster && !poster.startsWith('http')) {
+        poster = 'https://www3.animeflv.net' + poster;
+      }
+      const type = $el.find('.Type').text().trim();
+      const rating = $el.find('.Vts').text().trim();
+
+      if (id && title) {
+        animes.push({ id, title, poster, type, rating });
+      }
+    });
+
+    return NextResponse.json(animes);
+
+  } catch (error) {
+    return NextResponse.json({ error: 'Error filtrando animes' }, { status: 500 });
+  }
+}
+
+=== FILE: app/api/home/route.ts ===
+import { NextResponse } from 'next/server';
+import * as cheerio from 'cheerio';
+
+export const dynamic = 'force-dynamic';
+
+// 🛠️ LA NUEVA ARMA: El Rotador Antibloqueos
+async function getHtmlRobust(targetUrl: string) {
+  // Lista de disfraces (Estrategias)
+  const strategies = [
+    targetUrl, // 1. Intento Directo
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`, // 2. Proxy CodeTabs (Muy bueno para Cloudflare)
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`       // 3. Proxy AllOrigins (Respaldo final)
+  ];
+
+  for (const url of strategies) {
+    try {
+      console.log(`Intentando conectar vía: ${url.substring(0, 40)}...`);
+      
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        },
+        // Si el servidor se queda pensando 4 segundos, lo abortamos y probamos el siguiente
+        signal: AbortSignal.timeout(4000) 
+      });
+
+      if (response.ok) {
+        const html = await response.text();
+        // Verificamos que no sea la página de "Verificando que eres humano" de Cloudflare
+        if (html.includes('<html') && !html.toLowerCase().includes('just a moment')) {
+          return html; // ¡Tuvimos éxito! Devolvemos el HTML
+        }
+      }
+    } catch (error) {
+      // Si da SocketError o Timeout, lo ignoramos y el bucle pasa al siguiente proxy
+      console.warn(`Falló este intento, saltando al siguiente...`);
+    }
+  }
+  
+  return null; // Si fallan los 3, devolvemos null
+}
+
+
+// Función auxiliar para scrapear listas de animes
+async function scrapeAnimeList(urlTarget: string) {
+  try {
+    const html = await getHtmlRobust(urlTarget);
+    
+    if (!html) {
+      console.error(`Todos los intentos fallaron para ${urlTarget}`);
+      return [];
+    }
+
+    const $ = cheerio.load(html);
+    const animes: any[] = [];
+
+    $('article.Anime').each((_, element) => {
+      const $el = $(element);
+      const id = $el.find('a').attr('href')?.split('/anime/')[1] || '';
+      const title = $el.find('.Title').text().trim();
+      
+      let poster = $el.find('img').attr('src') || '';
+      if (poster && !poster.startsWith('http')) {
+        poster = 'https://www3.animeflv.net' + poster;
+      }
+      
+      const type = $el.find('.Type').text().trim();
+      const rating = $el.find('.Vts').text().trim();
+
+      if (id && title) {
+        animes.push({ id, title, poster, type, rating });
+      }
+    });
+
+    return animes;
+  } catch (error) {
+    console.error(`Error procesando datos de ${urlTarget}:`, error);
+    return [];
+  }
+}
+
+export async function GET() {
+  try {
+    const urlTrending = 'https://www3.animeflv.net/browse?status=1&order=rating';
+    const urlNew = 'https://www3.animeflv.net/browse?order=added';
+    const urlClassics = 'https://www3.animeflv.net/browse?status=2&order=rating';
+
+    // Para evitar abrumar los proxies y que nos bloqueen, ejecutamos 1 por 1 en lugar de Promise.all
+    const trending = await scrapeAnimeList(urlTrending);
+    const newReleases = await scrapeAnimeList(urlNew);
+    const classics = await scrapeAnimeList(urlClassics);
+
+    return NextResponse.json({
+      trending: trending.slice(0, 10),
+      newReleases: newReleases.slice(0, 10),
+      classics: classics.slice(0, 10)
+    });
+
+  } catch (error) {
+    console.error('Error cargando home:', error);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+  }
+}
+
+=== FILE: app/api/info/route.ts ===
+import { NextResponse } from 'next/server';
+import * as cheerio from 'cheerio';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+
+  if (!id) return NextResponse.json({ error: 'Falta ID' }, { status: 400 });
+
+  const cacheKey = `anime:${id}`;
+
+  try {
+    // A. MEMORIA: Revisar Supabase primero
+    const { data: cachedEntry } = await supabase
+      .from('api_cache')
+      .select('data')
+      .eq('key', cacheKey)
+      .single();
+
+    if (cachedEntry && cachedEntry.data) {
+      console.log(`⚡ CACHÉ HIT: Info recuperada para "${id}"`);
+      return NextResponse.json(cachedEntry.data);
+    }
+
+    // B. SCRAPING DIRECTO (Sin Proxies)
+    console.log(`🌐 SCRAPING DIRECTO: Buscando info fresca para "${id}"...`);
+    const targetUrl = `https://www3.animeflv.net/anime/${id}`;
+
+    const response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': 'https://www3.animeflv.net/'
+      }
+    });
+
+    if (!response.ok) {
+      return NextResponse.json({ error: 'Error de conexión con la fuente' }, { status: response.status });
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const title = $('h1.Title').text().trim();
+    
+    if (!title) {
+       return NextResponse.json({ error: 'Anime no encontrado' }, { status: 404 });
+    }
+
+    let poster = $('.Image figure img').attr('src') || '';
+    if (poster.startsWith('/')) {
+      poster = `https://www3.animeflv.net${poster}`;
+    }
+
+    const description = $('.Description p').text().trim();
+    const type = $('.Type').text().trim();
+    const genres = $('nav.Nvgnrs a').map((_, el) => $(el).text().trim()).get();
+    const status = $('.AnmStts span').text().trim();
+
+    const scripts = $('script').map((_, el) => $(el).html()).get();
+    const scriptWithEpisodes = scripts.find(s => s?.includes('var episodes ='));
+    
+    let episodes: any[] = [];
+    if (scriptWithEpisodes) {
+      const regex = /var episodes = (\[.*?\]);/s;
+      const match = scriptWithEpisodes.match(regex);
+      if (match && match[1]) {
+        try {
+          const rawEpisodes = JSON.parse(match[1]);
+          episodes = rawEpisodes.map((ep: any[]) => ({
+            number: ep[0],
+            id: ep[1]
+          })).reverse();
+        } catch(e) {}
+      }
+    }
+
+    const animeInfo = { id, title, poster, description, type, genres, status, episodes };
+
+    // C. GUARDADO EN SUPABASE
+    if (episodes.length > 0) {
+      await supabase.from('api_cache').insert({ key: cacheKey, data: animeInfo });
+      console.log(`💾 INFO GUARDADA: "${id}" en Supabase.`);
+    }
+
+    return NextResponse.json(animeInfo);
+
+  } catch (error) {
+    console.error('Error Info API:', error);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+  }
+}
+
+=== FILE: app/api/search/route.ts ===
+import { NextResponse } from 'next/server';
+import * as cheerio from 'cheerio';
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const query = searchParams.get('q'); // Obtenemos el término de búsqueda
+
+  if (!query) return NextResponse.json([]);
+
+  try {
+    const targetUrl = `https://www3.animeflv.net/browse?q=${encodeURIComponent(query)}`;
+
+    // Petición directa disfrazada
+    const response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': 'https://www3.animeflv.net/'
+      }
+    });
+
+    if (!response.ok) {
+      return NextResponse.json([]);
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const animes: any[] = [];
+
+    $('article.Anime').each((_, element) => {
+      const $el = $(element);
+      const id = $el.find('a').attr('href')?.split('/anime/')[1] || '';
+      const title = $el.find('.Title').text().trim();
+      
+      let poster = $el.find('img').attr('src') || '';
+      if (poster && !poster.startsWith('http')) {
+        poster = 'https://www3.animeflv.net' + poster;
+      }
+      
+      const type = $el.find('.Type').text().trim();
+      const rating = $el.find('.Vts').text().trim();
+
+      if (id && title) {
+        animes.push({ id, title, poster, type, rating });
+      }
+    });
+
+    return NextResponse.json(animes);
+
+  } catch (error) {
+    console.error('Error Search API:', error);
+    return NextResponse.json([], { status: 500 });
+  }
+}
+
+=== FILE: app/api/video/route.ts ===
+import { NextResponse } from 'next/server';
+import * as cheerio from 'cheerio';
+
+export const dynamic = 'force-dynamic';
+
+// 🛠️ EL ROTADOR ANTIBLOQUEOS (Opción B)
+async function getHtmlRobust(targetUrl: string) {
+  const strategies = [
+    targetUrl, // 1. Intento Directo (Ideal para Vercel)
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`, // 2. CodeTabs (Ideal para StackBlitz)
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`       // 3. Respaldo
+  ];
+
+  for (const url of strategies) {
+    try {
+      console.log(`[VIDEO API] Intentando: ${url.substring(0, 45)}...`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Referer': 'https://www3.animeflv.net/'
+        },
+        signal: AbortSignal.timeout(4000)
+      });
+
+      if (response.ok) {
+        const html = await response.text();
+        // Si no es la pantalla de bloqueo de Cloudflare, triunfamos
+        if (html.includes('<html') && !html.toLowerCase().includes('just a moment')) {
+          return html; 
+        }
+      }
+    } catch (error) {
+      console.warn(`[VIDEO API] Falló intento, probando siguiente...`);
+    }
+  }
+  return null;
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const animeId = searchParams.get('id');
+  const epNumber = searchParams.get('ep');
+
+  if (!animeId || !epNumber) {
+    return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
+  }
+
+  try {
+    // 1. URL real del episodio
+    const targetUrl = `https://www3.animeflv.net/ver/${animeId}-${epNumber}`;
+    
+    // 2. Extraemos el HTML usando nuestro escudo
+    const html = await getHtmlRobust(targetUrl);
+
+    if (!html) {
+      return NextResponse.json({ error: 'Bloqueo de seguridad o página no encontrada' }, { status: 503 });
+    }
+
+    const $ = cheerio.load(html);
+
+    // 3. Extraemos el script de videos
+    const scripts = $('script').map((_, el) => $(el).html()).get();
+    const scriptWithVideos = scripts.find(s => s?.includes('var videos ='));
+
+    if (!scriptWithVideos) {
+      return NextResponse.json({ error: 'No se encontraron videos (estructura cambiada)' }, { status: 404 });
+    }
+
+    const regex = /var videos = (\{.*?\});/s;
+    const match = scriptWithVideos.match(regex);
+
+    if (!match || !match[1]) {
+      return NextResponse.json({ error: 'Error parseando datos' }, { status: 500 });
+    }
+
+    const data = JSON.parse(match[1]);
+    const rawServers = data.SUB || []; 
+
+    // 4. LIMPIEZA MASIVA
+    const servers = rawServers.map((s: any) => {
+      let cleanUrl = s.code;
+      if (cleanUrl.includes('<iframe')) {
+        const srcMatch = cleanUrl.match(/src="([^"]+)"/);
+        if (srcMatch && srcMatch[1]) cleanUrl = srcMatch[1];
+      }
+      return {
+        name: s.server,
+        url: cleanUrl
+      };
+    });
+
+    return NextResponse.json({ servers });
+
+  } catch (error) {
+    console.error('Error Video API:', error);
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+  }
+}
+
+=== FILE: app/browse/page.tsx ===
+'use client';
+
+import { useState, useEffect, Suspense } from 'react';
+import { Navbar } from '@/components/navbar';
+import { AnimeCard } from '@/components/anime-card';
+import { Loader2, Filter, Sparkles } from 'lucide-react';
+import { cn } from "@/lib/utils";
+
+// Lista de géneros oficiales de AnimeFLV (Slug vs Nombre Real)
+const GENRES = [
+  { id: 'accion', name: 'Acción', color: 'bg-red-500' },
+  { id: 'aventura', name: 'Aventura', color: 'bg-orange-500' },
+  { id: 'comedia', name: 'Comedia', color: 'bg-yellow-500' },
+  { id: 'drama', name: 'Drama', color: 'bg-blue-500' },
+  { id: 'fantasia', name: 'Fantasía', color: 'bg-purple-500' },
+  { id: 'ciencia-ficcion', name: 'Ciencia Ficción', color: 'bg-cyan-500' },
+  { id: 'misterio', name: 'Misterio', color: 'bg-slate-500' },
+  { id: 'terror', name: 'Terror', color: 'bg-stone-800' },
+  { id: 'romance', name: 'Romance', color: 'bg-pink-500' },
+  { id: 'deportes', name: 'Deportes', color: 'bg-emerald-500' },
+  { id: 'recuentos-de-la-vida', name: 'Slice of Life', color: 'bg-lime-600' },
+  { id: 'ecchi', name: 'Ecchi', color: 'bg-fuchsia-600' },
+  { id: 'musica', name: 'Música', color: 'bg-indigo-500' },
+  { id: 'escolares', name: 'Escolares', color: 'bg-sky-600' },
+];
+
+function BrowseContent() {
+  const [selectedGenre, setSelectedGenre] = useState('accion');
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchGenre = async () => {
+      setLoading(true);
+      setResults([]);
+      try {
+        const res = await fetch(`/api/browse?genre=${selectedGenre}&order=default`);
+        const data = await res.json();
+        if (Array.isArray(data)) setResults(data);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGenre();
+  }, [selectedGenre]);
+
+  return (
+    <main className="min-h-screen bg-[#0a0a0a] text-white pb-20">
+      <Navbar />
+
+      <div className="container mx-auto px-4 pt-28">
+        <div className="flex flex-col lg:flex-row gap-8">
+          
+          {/* BARRA LATERAL DE GÉNEROS */}
+          <aside className="w-full lg:w-64 flex-shrink-0">
+            <div className="bg-neutral-900/50 rounded-2xl p-6 border border-white/5 sticky top-28">
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <Filter size={20} className="text-orange-500"/> Géneros
+              </h2>
+              <div className="flex flex-wrap lg:flex-col gap-2">
+                {GENRES.map((genre) => (
+                  <button
+                    key={genre.id}
+                    onClick={() => setSelectedGenre(genre.id)}
+                    className={cn(
+                      "px-4 py-2 rounded-xl text-sm font-medium transition-all text-left flex items-center justify-between group",
+                      selectedGenre === genre.id 
+                        ? `${genre.color} text-white shadow-lg` 
+                        : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white"
+                    )}
+                  >
+                    {genre.name}
+                    {selectedGenre === genre.id && <Sparkles size={14} className="animate-pulse"/>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+
+          {/* GRID DE RESULTADOS */}
+          <div className="flex-1">
+            <div className="mb-6">
+              <h1 className="text-3xl font-bold flex items-center gap-2">
+                Explorando: <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-600 uppercase">{GENRES.find(g => g.id === selectedGenre)?.name}</span>
+              </h1>
+              <p className="text-neutral-500 mt-1">Los animes más populares de esta categoría</p>
+            </div>
+
+            {loading ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {[...Array(10)].map((_, i) => (
+                  <div key={i} className="aspect-[2/3] bg-neutral-900 rounded-xl animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {results.map((anime) => (
+                  <AnimeCard key={anime.id} {...anime} image={anime.poster} />
+                ))}
+              </div>
+            )}
+            
+            {!loading && results.length === 0 && (
+              <div className="text-center py-20 text-neutral-500">
+                No se encontraron animes para este género (o AnimeFLV está lento).
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default function Browse() {
+  return (
+    <Suspense fallback={<div className="bg-black h-screen" />}>
+      <BrowseContent />
+    </Suspense>
+  );
+}
+
+=== FILE: app/favorites/page.tsx ===
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import { Navbar } from '@/components/navbar';
+import { AnimeCard } from '@/components/anime-card';
+import { Loader2, Heart } from 'lucide-react';
+
+export default function FavoritesPage() {
+  const router = useRouter();
+  const [favorites, setFavorites] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const loadFavorites = async () => {
+      // 1. Verificar Usuario
+      const savedUser = localStorage.getItem('userData');
+      if (!savedUser) {
+        router.push('/'); // Si no hay usuario, fuera de aquí
+        return;
+      }
+      
+      const parsedUser = JSON.parse(savedUser);
+      setUser(parsedUser);
+
+      // 2. Pedir favoritos a Supabase
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('*')
+        .eq('user_id', parsedUser.id || (await supabase.auth.getUser()).data.user?.id);
+
+      if (error) {
+        console.error('Error cargando favoritos:', error);
+      } else {
+        setFavorites(data || []);
+      }
+      
+      setLoading(false);
+    };
+
+    loadFavorites();
+  }, [router]);
+
+  return (
+    <main className="min-h-screen bg-[#0a0a0a] text-white pb-20">
+      
+      {/* Navbar detectando usuario logueado */}
+      <Navbar user={user} isGuest={false} />
+
+      <div className="container mx-auto px-6 pt-32">
+        
+        {/* Encabezado */}
+        <div className="flex items-center gap-3 mb-8">
+          <Heart className="text-red-500 fill-current" size={32} />
+          <h1 className="text-3xl font-bold">Mi Lista</h1>
+          <span className="bg-white/10 text-gray-400 text-sm font-bold px-3 py-1 rounded-full">
+            {favorites.length}
+          </span>
+        </div>
+
+        {/* Contenido */}
+        {loading ? (
+          <div className="h-64 flex items-center justify-center">
+            <Loader2 className="animate-spin text-orange-600" size={40} />
+          </div>
+        ) : favorites.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+            {favorites.map((fav) => (
+              // Mapeamos los datos de la tabla a las props del Card
+              <AnimeCard 
+                key={fav.id} 
+                id={fav.anime_id} 
+                title={fav.title} 
+                image={fav.poster || fav.image_url} // Aceptamos ambos nombres por si acaso
+              />
+            ))}
+          </div>
+        ) : (
+          // Estado Vacío (Si no ha guardado nada)
+          <div className="flex flex-col items-center justify-center py-20 text-center opacity-50">
+            <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mb-4">
+              <Heart size={40} className="text-gray-600" />
+            </div>
+            <h2 className="text-xl font-bold mb-2">Tu lista está vacía</h2>
+            <p className="text-gray-400 max-w-md">
+              Aún no has guardado ningún anime. Ve al inicio y dale al botón &quot;+ Mi Lista&quot; en tus series favoritas.
+            </p>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+=== FILE: app/home/page.tsx ===
+'use client';
+
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Navbar } from '@/components/navbar';
+import { HeroSection } from '@/components/hero-section';
+import { AnimeCard } from '@/components/anime-card';
+import { Loader2, Flame, Sparkles, Trophy } from 'lucide-react';
+
+function HomeContent() {
+  const searchParams = useSearchParams();
+  const query = searchParams.get('q');
+
+  // --- MODIFICACIÓN 1: Estado para el usuario ---
+  const [user, setUser] = useState<any>(null);
+
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [homeData, setHomeData] = useState<{trending: any[], newReleases: any[], classics: any[]} | null>(null);
+  const [featuredAnime, setFeaturedAnime] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  // --- MODIFICACIÓN 2: Leer el usuario guardado (que viene de Supabase/Login) ---
+  useEffect(() => {
+    const savedUser = localStorage.getItem('userData');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  useEffect(() => {
+    const loadContent = async () => {
+      setLoading(true);
+      
+      try {
+        if (query) {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          if (Array.isArray(data)) setSearchResults(data);
+        } else {
+          const res = await fetch('/api/home');
+          const data = await res.json();
+          
+          if (data.trending) {
+            setHomeData(data);
+            const randomFeatured = data.trending[Math.floor(Math.random() * data.trending.length)];
+            const infoRes = await fetch(`/api/info?id=${randomFeatured.id}`);
+            const infoData = await infoRes.json();
+            setFeaturedAnime({ ...infoData, image: infoData.poster });
+          }
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadContent();
+  }, [query]);
+
+  return (
+    <main className="min-h-screen bg-[#0a0a0a] text-white pb-20">
+      <Navbar />
+
+      {loading ? (
+        <div className="h-screen flex items-center justify-center">
+          <Loader2 className="animate-spin text-orange-600" size={50} />
+        </div>
+      ) : (
+        <>
+          {query ? (
+            <div className="container mx-auto px-6 pt-32">
+             <h2 className="text-2xl font-bold mb-6">Resultados para <span className="text-orange-500">&quot;{query}&quot;</span></h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                {searchResults.map((anime) => (
+                  <AnimeCard key={anime.id} {...anime} image={anime.poster} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* --- MODIFICACIÓN 3: Pasamos el usuario al Hero --- */}
+              {featuredAnime && <HeroSection anime={featuredAnime} user={user} />}
+              
+              <div className="container mx-auto px-6 space-y-12 mt-10 relative z-20">
+                
+                <section id="trending" className="scroll-mt-28">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Flame className="text-orange-500" />
+                    <h2 className="text-2xl font-bold">Tendencias <span className="text-neutral-500 text-sm font-normal ml-2">En emisión</span></h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                    {homeData?.trending.slice(0, 5).map((anime) => (
+                      <AnimeCard key={anime.id} {...anime} image={anime.poster} />
+                    ))}
+                  </div>
+                </section>
+
+                <section id="new" className="scroll-mt-28">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Sparkles className="text-yellow-400" />
+                    <h2 className="text-2xl font-bold">Recién Agregados</h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                    {homeData?.newReleases.slice(0, 5).map((anime) => (
+                      <AnimeCard key={anime.id} {...anime} image={anime.poster} isNew={true} />
+                    ))}
+                  </div>
+                </section>
+
+                 <section id="classics" className="scroll-mt-28">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Trophy className="text-purple-500" />
+                    <h2 className="text-2xl font-bold">Mejores Valorados</h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                    {homeData?.classics.slice(0, 5).map((anime) => (
+                      <AnimeCard key={anime.id} {...anime} image={anime.poster} />
+                    ))}
+                  </div>
+                </section>
+
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="bg-black h-screen" />}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+=== FILE: app/layout.tsx ===
+import './globals.css';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata: Metadata = {
+  title: {
+    default: 'AniStreamJD',
+    template: '%s | AniStreamJD',
+  },
+  description: 'La mejor plataforma de anime creada por Jared Ortiz',
+  
+  openGraph: {
+    title: 'AniStreamJD - Ver Anime Online',
+    description: 'Disfruta de tus animes favoritos gratis y sin interrupciones.',
+    images: [
+      {
+        url: 'https://i.imgur.com/5pZik7z.png', // ✅ Enlace directo arreglado
+        width: 1200,
+        height: 630,
+        alt: 'AniStream Preview',
+      },
+    ],
+    locale: 'es_ES',
+    type: 'website',
+  },
+  
+  twitter: {
+    card: 'summary_large_image',
+    title: 'AniStreamJD',
+    description: 'Created by Jared Ortiz',
+    images: ['https://i.imgur.com/5pZik7z.png'], // ✅ Enlace directo arreglado
+  },
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="es">
+      <body className={inter.className}>{children}</body>
+    </html>
+  );
+}
+
+=== FILE: app/page.tsx ===
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
+import { Eye, EyeOff, Loader2, Play, Rocket } from 'lucide-react';
+
+export default function LoginPage() {
+  const router = useRouter();
+  
+  // Estados del Formulario
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // 1. FUNCIÓN PARA ENTRAR COMO INVITADO
+  const handleGuestAccess = () => {
+    // Guardamos la "credencial" de invitado
+    localStorage.setItem('userMode', 'guest');
+    localStorage.removeItem('userData'); // Limpiamos datos viejos por si acaso
+    router.push('/home');
+  };
+
+  // 2. FUNCIÓN PARA LOGIN / REGISTRO
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg('');
+
+    try {
+      if (isRegistering) {
+        // --- LÓGICA DE REGISTRO ---
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName, // Guardamos el nombre para el saludo "Bienvenido Jared"
+            },
+          },
+        });
+
+        if (error) throw error;
+
+        // IMPORTANTE: Si Supabase pide confirmar email, data.user puede ser null o requerir espera.
+        // Si tu proyecto tiene desactivada la confirmación de email, esto entra directo.
+        if (data.user) {
+          saveUserAndRedirect(data.user);
+        } else {
+          setErrorMsg('Revisa tu correo para confirmar la cuenta.');
+        }
+
+      } else {
+        // --- LÓGICA DE INICIO DE SESIÓN ---
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+
+        if (data.user) {
+          saveUserAndRedirect(data.user);
+        }
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Ocurrió un error inesperado');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. EL ESLABÓN PERDIDO: GUARDAR DATOS EN EL NAVEGADOR
+  const saveUserAndRedirect = (user: any) => {
+    // A. Marcamos que es un usuario registrado
+    localStorage.setItem('userMode', 'registered');
+    
+    // B. Guardamos el objeto usuario (para que la Navbar lea el nombre y Avatar)
+    localStorage.setItem('userData', JSON.stringify(user));
+
+    // C. Nos vamos al Home
+    router.push('/home');
+  };
+
+  return (
+    <div className="min-h-screen w-full flex relative overflow-hidden bg-black font-sans">
+      
+      {/* FONDO ANIMADO (Imagen de One Piece o la que gustes) */}
+      <div 
+        className="absolute inset-0 z-0 opacity-40 bg-cover bg-center animate-pulse-slow"
+        style={{ backgroundImage: "url('https://wallpapercave.com/wp/wp9386912.jpg')" }}
+      />
+      <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 via-20% to-transparent z-0" />
+
+      {/* CONTENEDOR PRINCIPAL */}
+      <div className="relative z-10 w-full max-w-md p-8 flex flex-col justify-center min-h-screen lg:ml-20">
+        
+        {/* LOGO */}
+        <div className="mb-10 flex items-center gap-3">
+          <div className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center text-white">
+            <Play fill="white" size={20} />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-white tracking-tighter leading-none">
+              Ani<span className="text-orange-500">Stream</span>
+            </h1>
+            <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase">By Jared Ortiz</p>
+          </div>
+        </div>
+
+        {/* CAJA DE LOGIN */}
+        <div className="bg-[#111]/80 backdrop-blur-md border border-white/10 p-8 rounded-2xl shadow-2xl">
+          <h2 className="text-2xl font-bold text-white mb-2">
+            {isRegistering ? 'Crea tu cuenta' : 'Bienvenido de nuevo'}
+          </h2>
+          <p className="text-gray-400 text-sm mb-6">
+            {isRegistering ? 'Únete a la mejor comunidad de anime.' : 'Ingresa para continuar viendo tus series.'}
+          </p>
+
+          {errorMsg && (
+            <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded text-red-200 text-xs font-bold">
+              {errorMsg}
+            </div>
+          )}
+
+          <form onSubmit={handleAuth} className="space-y-4">
+            
+            {/* CAMPO NOMBRE (Solo en registro) */}
+            {isRegistering && (
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-500 uppercase">Nombre Completo</label>
+                <input 
+                  type="text" 
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Ej: Monkey D. Luffy"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange-500 focus:outline-none transition-colors"
+                  required
+                />
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-500 uppercase">Correo Electrónico</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="nakama@anistream.com"
+                className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange-500 focus:outline-none transition-colors"
+                required
+              />
+            </div>
+
+            <div className="space-y-1 relative">
+              <label className="text-xs font-bold text-gray-500 uppercase">Contraseña</label>
+              <div className="relative">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange-500 focus:outline-none transition-colors pr-10"
+                  required
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-gray-500 hover:text-white"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={loading}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3.5 rounded-lg transition-transform active:scale-95 flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 className="animate-spin" /> : (isRegistering ? 'REGISTRARSE' : 'INICIAR SESIÓN')}
+            </button>
+          </form>
+
+          {/* TOGGLE REGISTRO / LOGIN */}
+          <div className="mt-6 text-center text-sm text-gray-400">
+            {isRegistering ? '¿Ya tienes cuenta? ' : '¿Aún no eres miembro? '}
+            <button 
+              onClick={() => setIsRegistering(!isRegistering)}
+              className="text-orange-500 font-bold hover:underline"
+            >
+              {isRegistering ? 'Inicia Sesión' : 'Regístrate gratis'}
+            </button>
+          </div>
+
+          <div className="my-6 border-t border-white/10 relative">
+            <span className="absolute left-1/2 -top-3 -translate-x-1/2 bg-[#0d0d0d] px-2 text-xs text-gray-500 font-bold">O CONTINÚA COMO</span>
+          </div>
+
+          {/* BOTÓN INVITADO */}
+          <button 
+            onClick={handleGuestAccess}
+            className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 group"
+          >
+            <Rocket size={18} className="text-yellow-500 group-hover:scale-110 transition-transform"/> Entrar como Invitado
+          </button>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+=== FILE: app/search/page.tsx ===
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Navbar } from '@/components/navbar'; // Asegúrate de que la ruta sea correcta
+import { AnimeCard } from '@/components/anime-card'; // Asegúrate de tener este componente
+import { Loader2, SearchX } from 'lucide-react';
+
+export default function SearchPage() {
+  const searchParams = useSearchParams();
+  const query = searchParams.get('q'); // Lee lo que escribiste en el buscador
+  
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Cargamos el usuario para la Navbar (opcional, si quieres que salga el avatar)
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    // Cargar usuario del localStorage
+    const userData = localStorage.getItem('userData');
+    if (userData) setUser(JSON.parse(userData));
+  }, []);
+
+  useEffect(() => {
+    if (!query) return;
+
+    const fetchResults = async () => {
+      setLoading(true);
+      try {
+        // AQUÍ LLAMAMOS A TU ARCHIVO API EXISTENTE 👇
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        
+        if (Array.isArray(data)) {
+          setResults(data);
+        } else {
+          setResults([]);
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchResults();
+  }, [query]);
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      {/* Navbar fija */}
+      <Navbar user={user} isGuest={!user} />
+
+      <main className="container mx-auto px-4 pt-28 pb-10">
+        <h1 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-2">
+          Resultados para: <span className="text-orange-500">&quot;{query}&quot;</span>
+        </h1>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-60">
+            <Loader2 className="animate-spin text-orange-500 mb-4" size={40} />
+            <p className="text-gray-400">Buscando en el catálogo...</p>
+          </div>
+        ) : results.length > 0 ? (
+         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
+            {results.map((anime) => (
+              // USAR {...anime} es la clave para que no de error
+              <AnimeCard key={anime.id} {...anime} />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-60 text-gray-500">
+            <SearchX size={60} className="mb-4 opacity-50" />
+            <p className="text-xl font-medium">No encontramos nada.</p>
+            <p className="text-sm">Intenta con otro nombre o revisa la ortografía.</p>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+=== FILE: components/anime-card.tsx ===
+"use client";
+
+import Link from "next/link";
+import { Play, Star } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface AnimeCardProps {
+  id: string;
+  title: string;
+  image: string;
+  type?: string;
+  rating?: number;
+}
+
+export function AnimeCard({
+  id,
+  title,
+  image,
+  type,
+  rating,
+}: AnimeCardProps) {
+  return (
+    <Link href={`/anime/${id}`} className="group block relative">
+      <div className="relative overflow-hidden rounded-2xl aspect-[2/3] bg-neutral-900 border border-white/5">
+        {/* Poster Image */}
+        <img
+          src={image}
+          alt={title}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+          loading="lazy"
+        />
+
+        {/* Gradient Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
+
+        {/* Type Badge */}
+        {type && (
+          <div className="absolute top-3 left-3 px-2.5 py-1 bg-orange-600 rounded-lg text-[10px] font-bold text-white shadow-lg">
+            {type}
+          </div>
+        )}
+
+        {/* Hover Play Button */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
+          <div className={cn(
+            "w-14 h-14 rounded-full bg-orange-600/90 flex items-center justify-center backdrop-blur-sm",
+            "transform scale-50 group-hover:scale-100 transition-transform duration-300",
+            "shadow-[0_0_30px_rgba(255,107,0,0.5)]"
+          )}>
+            <Play className="w-6 h-6 text-white fill-current ml-1" />
+          </div>
+        </div>
+
+        {/* Bottom Info */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300">
+          <h3 className="text-white font-bold text-sm line-clamp-2 leading-tight group-hover:text-orange-400 transition-colors">
+            {title}
+          </h3>
+        </div>
+
+        {/* Border Glow Effect */}
+        <div className="absolute inset-0 rounded-2xl ring-2 ring-transparent group-hover:ring-orange-500/50 transition-all duration-300 pointer-events-none" />
+      </div>
+    </Link>
+  );
+}
+
+=== FILE: components/hero-section.tsx ===
+'use client';
+
+import { useState, useEffect } from 'react';
+import Link from 'next/link'; // <--- IMPORTANTE: Importamos Link
+import { Play, Plus, Check, Loader2 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+
+interface HeroSectionProps {
+  anime: any;
+  user?: any;
+}
+
+export function HeroSection({ anime, user }: HeroSectionProps) {
+  // Prioridad: Banner (Ancho) -> Imagen (Original) -> Poster (Vertical)
+  const bgImage = anime.banner || anime.image || anime.poster;
+  
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [loadingFav, setLoadingFav] = useState(false);
+
+  // Lógica de Favoritos
+  useEffect(() => {
+    const checkFavorite = async () => {
+      if (!user) return;
+      const { data } = await supabase
+        .from('user_favorites')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('anime_id', anime.id)
+        .single();
+      if (data) setIsFavorite(true);
+    };
+    checkFavorite();
+  }, [anime.id, user]);
+
+  const toggleFavorite = async () => {
+    if (!user) {
+      alert("Necesitas iniciar sesión para guardar animes.");
+      return;
+    }
+    setLoadingFav(true);
+
+    if (isFavorite) {
+      const { error } = await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('anime_id', anime.id);
+      if (!error) setIsFavorite(false);
+    } else {
+      const { error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: user.id,
+          anime_id: anime.id,
+          title: anime.title,
+          poster: anime.poster || anime.image,
+        });
+      if (!error) setIsFavorite(true);
+    }
+    setLoadingFav(false);
+  };
+
+  return (
+    <div className="relative w-full h-[85vh] md:h-[75vh] flex items-center overflow-hidden bg-black">
+      
+      {/* 1. IMAGEN DE FONDO */}
+      <div className="absolute inset-0 select-none">
+        <img 
+          src={bgImage} 
+          alt={anime.title}
+          className="w-full h-full object-cover opacity-60 scale-105"
+        />
+      </div>
+
+      {/* 2. CAPAS DE DEGRADADO */}
+      <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/40 to-transparent"></div>
+      <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent"></div>
+      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-transparent"></div>
+
+      {/* 3. CONTENIDO */}
+      <div className="relative container mx-auto px-6 w-full flex flex-col md:flex-row items-end md:items-center justify-between mt-16 z-10">
+        
+        <div className="max-w-2xl space-y-6">
+          <div className="flex gap-2">
+            <span className="bg-orange-600 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shadow-lg shadow-orange-900/40">
+              Destacado
+            </span>
+            <span className="bg-white/10 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider backdrop-blur-md border border-white/10">
+              {anime.type || 'TV'}
+            </span>
+          </div>
+
+          <h1 className="text-3xl md:text-4xl font-black leading-none tracking-tight drop-shadow-2xl text-white">
+            {anime.title}
+          </h1>
+          
+          <p className="text-gray-200 text-lg md:text-xl line-clamp-3 max-w-xl drop-shadow-lg font-medium">
+            {anime.description || "Sin descripción disponible."}
+          </p>
+          
+          <div className="flex items-center gap-4 pt-4">
+            
+            {/* --- CORRECCIÓN AQUÍ: Agregamos Link --- */}
+            <Link href={`/anime/${anime.id}`}>
+              <button className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3 rounded-lg font-bold flex items-center gap-2 transition transform hover:scale-105 shadow-xl shadow-orange-900/30">
+                <Play fill="currentColor" size={20} />
+                Ver Ahora
+              </button>
+            </Link>
+            {/* --------------------------------------- */}
+            
+            <button 
+              onClick={toggleFavorite}
+              disabled={loadingFav}
+              className={`
+                px-6 py-3 rounded-lg font-medium border backdrop-blur-md flex items-center gap-2 transition-all shadow-lg
+                ${isFavorite 
+                  ? "bg-green-600/20 border-green-500 text-green-400 hover:bg-green-600/30" 
+                  : "bg-white/10 border-white/20 text-white hover:bg-white/20"
+                }
+              `}
+            >
+              {loadingFav ? (
+                <Loader2 size={20} className="animate-spin" />
+              ) : isFavorite ? (
+                <>
+                  <Check size={20} /> En mi lista
+                </>
+              ) : (
+                <>
+                  <Plus size={20} /> Mi Lista
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* TARJETA DE BIENVENIDA (LADO DERECHO) */}
+        {user && (
+          <div className="hidden lg:flex flex-col items-end justify-center h-full pr-10 pointer-events-none select-none z-20 absolute right-0 top-0 bottom-0">
+            <div className="bg-black/40 backdrop-blur-xl border border-white/10 px-6 py-4 rounded-2xl flex items-center gap-4 shadow-2xl transform transition-all hover:scale-105 duration-500 group">
+               <div className="flex flex-col text-right">
+                  <span className="text-[13px] text-orange-400 font-bold tracking-[0.2em] uppercase mb-1">
+                    Bienvenido
+                  </span>
+                  <span className="text-3xl font-black text-white tracking-tight group-hover:text-orange-100 transition-colors">
+                    {user.user_metadata?.full_name?.split(' ')[0] || user.name || "Nakama"}
+                  </span>
+               </div>
+               <div className="w-[1px] h-10 bg-gradient-to-b from-transparent via-white/20 to-transparent"></div>
+               <div className="relative">
+                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white font-bold shadow-lg shadow-orange-900/50 text-lg">
+                    {user.user_metadata?.full_name ? user.user_metadata.full_name[0].toUpperCase() : "N"}
+                 </div>
+                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-black rounded-full"></div>
+               </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+=== FILE: components/navbar.tsx ===
+'use client';
+
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+// Importamos los iconos necesarios
+import { Search, Menu, X, Play, Bell, User, Filter, Flame, Sparkles, Trophy, Crown, LogOut } from 'lucide-react';
+// Importamos supabase (asegúrate de que lib/supabase.ts exista y exporte 'supabase')
+import { supabase } from '@/lib/supabase';
+
+interface NavbarProps {
+  user?: any;
+  isGuest?: boolean;
+}
+
+export const Navbar = ({ user, isGuest }: NavbarProps) => {
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [query, setQuery] = useState('');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+      router.push(`/search?q=${encodeURIComponent(query)}`);
+      setIsMobileMenuOpen(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem('userMode');
+    localStorage.removeItem('userData');
+    router.push('/');
+  };
+
+  // Clases dinámicas: SIEMPRE VIDRIO
+  const navClasses = `fixed top-0 w-full z-50 transition-all duration-500 border-b ${
+    (isScrolled || isMobileMenuOpen) 
+      ? "bg-black/60 backdrop-blur-xl border-white/10 shadow-lg" // Scroll: Vidrio más oscuro y sólido
+      : "bg-black/30 backdrop-blur-md border-white/5"            // Top: Vidrio más suave pero VISIBLE siempre
+  }`;
+
+  return (
+    <nav className={navClasses}>
+      <div className="container mx-auto px-4 md:px-6 h-24 flex items-center justify-between gap-4">
+        
+        {/* LOGO */}
+        <Link href="/home" className="flex items-center gap-2 md:gap-3 group flex-shrink-0">
+          <div className="w-8 h-8 md:w-14 md:h-14 rounded-xl bg-orange-600 flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg shadow-orange-900/20">
+            <Play className="w-4 h-8 md:w-8 md:h-8 text-white fill-current" />
+          </div>
+          <div className="flex flex-col justify-center">
+            <span className="text-lg md:text-4xl font-black text-white tracking-tight leading-none">
+              Ani<span className="text-orange-500">Stream</span>
+            </span>
+            <span className="text-[0.55rem] md:text-xs font-bold text-neutral-500 tracking-widest uppercase leading-tight pl-[8px] group-hover:text-orange-400 transition-colors block">
+              byJaredOrtiz
+            </span>
+          </div>
+        </Link>
+
+        {/* MENÚ ESCRITORIO */}
+        <div className="hidden md:flex items-center gap-10">
+          <Link href="/home" className="text-white hover:text-orange-500 transition-colors font-medium text-lg">Inicio</Link>
+          <Link href="/browse" className="text-neutral-300 hover:text-orange-500 transition-colors text-lg font-medium flex items-center gap-1"><Filter size={14} /> Explorar</Link>
+          {!isGuest && (
+             <Link href="/favorites" className="text-neutral-300 hover:text-orange-500 transition-colors text-lg font-medium flex items-center gap-1">Mi Lista</Link>
+          )}
+        </div>
+
+        {/* BUSCADOR */}
+        <div className="hidden md:flex flex-1 max-w-md mx-4">
+          <form onSubmit={handleSearch} className="relative w-full group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 group-focus-within:text-orange-500 transition-colors" size={20} />
+            <input 
+              type="text" 
+              placeholder="Buscar anime..." 
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-neutral-900/50 border border-white/10 rounded-full py-4 pl-10 pr-5 text-lg text-white focus:outline-none focus:border-orange-500/50 focus:bg-neutral-900 transition-all placeholder:text-neutral-600"
+            />
+          </form>
+        </div>
+
+        {/* ACCIONES DERECHA */}
+        <div className="flex items-center gap-2 md:gap-4">
+           {!isMobileMenuOpen && (
+             <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden text-white p-2">
+               <Search size={20} />
+             </button>
+           )}
+
+           {/* LÓGICA INVITADO vs USUARIO */}
+           {isGuest ? (
+             <div className="flex items-center gap-3">
+                <Link href="/" className="hidden lg:block text-xs font-bold text-neutral-300 hover:text-white uppercase tracking-wide">
+                  Acceder
+                </Link>
+                <Link href="/" className="flex items-center gap-2 bg-[#f47521] hover:bg-[#ff8f45] text-black px-3 py-1.5 md:px-4 md:py-1.5 rounded-sm transition-transform active:scale-95 group">
+                  <Crown size={16} className="fill-black group-hover:scale-110 transition-transform" />
+                  <div className="flex flex-col leading-none hidden sm:flex">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Prueba Gratis</span>
+                    <span className="text-[10px] font-medium opacity-80">Premium</span>
+                  </div>
+                  <span className="sm:hidden text-xs font-bold">PREMIUM</span>
+                </Link>
+             </div>
+           ) : (
+             <>
+                <button className="text-neutral-300 hover:text-white transition-colors relative hidden sm:block">
+                  <Bell size={20} />
+                  <span className="absolute top-0 right-0 w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
+                </button>
+                
+                <div className="group relative">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-orange-500 to-red-600 p-[2px] cursor-pointer">
+                    <div className="w-full h-full rounded-full bg-neutral-900 flex items-center justify-center overflow-hidden font-bold text-white select-none">
+                       {user?.user_metadata?.full_name ? user.user_metadata.full_name[0].toUpperCase() : (user?.name ? user.name[0].toUpperCase() : <User size={16} />)}
+                    </div>
+                  </div>
+
+                  <div className="absolute top-full right-0 mt-2 w-48 bg-[#111] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right z-50">
+                      <div className="px-4 py-3 border-b border-white/5">
+                        <p className="text-sm text-white font-bold truncate">{user?.user_metadata?.full_name || user?.name || "Usuario"}</p>
+                        <p className="text-xs text-gray-500 truncate">{user?.email || "Miembro"}</p>
+                      </div>
+                      <button 
+                        onClick={handleLogout}
+                        className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-white/5 flex items-center gap-2 transition-colors first-letter:rounded-b-xl"
+                      >
+                        <LogOut size={14} /> Cerrar Sesión
+                      </button>
+                  </div>
+                </div>
+             </>
+           )}
+
+          <button 
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="md:hidden text-white p-2 hover:bg-white/10 rounded-lg transition-colors ml-1"
+          >
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
+      </div>
+
+      {/* MENÚ MÓVIL */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden absolute top-16 left-0 w-full bg-[#0a0a0a] border-b border-white/10 shadow-2xl h-[calc(100vh-4rem)] bg-opacity-95 backdrop-blur-xl overflow-y-auto">
+          <div className="p-4 space-y-6">
+            <form onSubmit={handleSearch} className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400" size={20} />
+              <input 
+                type="text" 
+                placeholder="¿Qué quieres ver hoy?" 
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoFocus
+                className="w-full bg-neutral-800/50 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white text-lg focus:outline-none focus:border-orange-500 transition-colors placeholder:text-neutral-500"
+              />
+            </form>
+
+            <div className="grid gap-2">
+              <MobileLink href="/home" onClick={() => setIsMobileMenuOpen(false)} icon={<Play size={20}/>}>Inicio</MobileLink>
+              <MobileLink href="/browse" onClick={() => setIsMobileMenuOpen(false)} icon={<Filter size={20}/>}>Explorar Géneros</MobileLink>
+              {!isGuest && (
+                 <MobileLink href="/favorites" onClick={() => setIsMobileMenuOpen(false)} icon={<Trophy size={20} className="text-purple-500"/>}>Mi Lista</MobileLink>
+              )}
+              <div className="my-4 border-t border-white/10"></div>
+              {isGuest ? (
+                 <MobileLink href="/" onClick={() => setIsMobileMenuOpen(false)} icon={<Crown size={20} className="text-orange-500"/>}>Registrarse / Entrar</MobileLink>
+              ) : (
+                 <button 
+                  onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }}
+                  className="flex items-center gap-4 p-4 text-red-400 hover:text-red-300 hover:bg-white/10 rounded-2xl transition-all font-medium active:scale-95 text-lg w-full text-left"
+                 >
+                   <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                     <LogOut size={20}/>
+                   </div>
+                   Cerrar Sesión
+                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </nav>
+  );
+};
+
+function MobileLink({ href, onClick, children, icon }: any) {
+  return (
+    <Link 
+      href={href} 
+      onClick={onClick}
+      className="flex items-center gap-4 p-4 text-neutral-300 hover:text-white hover:bg-white/10 rounded-2xl transition-all font-medium active:scale-95 text-lg"
+    >
+      <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+        {icon}
+      </div>
+      {children}
+    </Link>
+  );
+}
+
+=== FILE: components/ui/button.tsx ===
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-10 px-4 py-2",
+        sm: "h-9 rounded-md px-3",
+        lg: "h-11 rounded-md px-8",
+        icon: "h-10 w-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+export interface ButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof buttonVariants> {}
+
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, ...props }, ref) => {
+    return (
+      <button
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        {...props}
+      />
+    )
+  }
+)
+Button.displayName = "Button"
+
+export { Button, buttonVariants }
+
+=== FILE: lib/smart-fetch.ts ===
+import { supabase } from './supabase';
+
+/**
+ * Función Maestra: Busca en caché primero, si falla, descarga de internet.
+ * @param key - El nombre único para guardar (ej: "anime/naruto")
+ * @param fetcher - La función que descarga los datos si no existen en memoria
+ */
+export async function getOrFetch(key: string, fetcher: () => Promise<any>) {
+  // 1. Intentar leer de Supabase (Memoria)
+  try {
+    const { data: cached, error } = await supabase
+      .from('api_cache')
+      .select('data')
+      .eq('key', key)
+      .single();
+
+    if (cached && !error) {
+      console.log(`⚡ [CACHE HIT] Encontrado en Supabase: ${key}`);
+      return cached.data;
+    }
+  } catch (e) {
+    // Si falla la lectura, no pasa nada, seguimos a internet
+    console.log("⚠️ Error leyendo caché, yendo a internet...");
+  }
+
+  // 2. Si no existe, ejecutar la descarga real (Internet)
+  console.log(`🌐 [CACHE MISS] Descargando de internet: ${key}...`);
+  try {
+    const freshData = await fetcher();
+
+    // 3. Guardar en Supabase para el futuro (sin esperar, background)
+    if (freshData) {
+      supabase
+        .from('api_cache')
+        .insert({ key: key, data: freshData })
+        .then(({ error }) => {
+            if (error) console.error("Error guardando en caché:", error);
+            else console.log(`💾 [SAVED] Guardado en Supabase: ${key}`);
+        });
+    }
+
+    return freshData;
+  } catch (err) {
+    console.error("Error fatal descargando:", err);
+    return null;
+  }
+}
+
+=== FILE: lib/supabase.ts ===
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+=== FILE: lib/utils.ts ===
+import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+=== FILE: next-env.d.ts ===
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/basic-features/typescript for more information.
+
+
+=== FILE: next.config.js ===
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  swcMinify: false, // Mantenemos esto para evitar el error de "addons disabled"
+  images: {
+    domains: [],
+  },
+};
+
+module.exports = nextConfig;
+
+=== FILE: postcss.config.js ===
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+
+=== FILE: tailwind.config.ts ===
+import type { Config } from 'tailwindcss';
+
+const config: Config = {
+  content: [
+    './pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'gradient-conic':
+          'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
+      },
+    },
+  },
+  plugins: [],
+};
+export default config;
